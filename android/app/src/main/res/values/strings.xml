@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">iTask Bot</string>
+    <string name="title_activity_main">iTask Bot</string>
+    <string name="package_name">vn.itask.bot</string>
+    <string name="custom_url_scheme">vn.itask.bot</string>
+</resources>

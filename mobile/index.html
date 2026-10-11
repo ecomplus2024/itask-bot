@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>iTask Bot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #09090b; color: #e4e4e7;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .card { width: 100%; max-width: 360px; text-align: center; }
+    .logo { font-size: 56px; margin-bottom: 12px; }
+    h1 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+    p { font-size: 14px; color: #a1a1aa; margin-bottom: 24px; line-height: 1.5; }
+    input {
+      width: 100%; padding: 12px 14px; font-size: 15px;
+      background: #18181b; border: 1px solid #3f3f46; border-radius: 10px;
+      color: #e4e4e7; outline: none; margin-bottom: 12px;
+    }
+    input:focus { border-color: #34d399; }
+    button {
+      width: 100%; padding: 12px; font-size: 15px; font-weight: 600;
+      background: #e4e4e7; color: #09090b; border: none; border-radius: 10px;
+      cursor: pointer;
+    }
+    .err { color: #f87171; font-size: 13px; margin-top: 10px; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🤖</div>
+    <h1>iTask Bot</h1>
+    <p>Nhập địa chỉ server iTask của bạn<br/>(máy chạy <code>npm run dev</code> cùng wifi, hoặc URL đã deploy)</p>
+    <input id="url" placeholder="http://192.168.1.10:3000" autocapitalize="off" autocorrect="off" inputmode="url" />
+    <button id="go">Kết nối</button>
+    <div class="err" id="err"></div>
+  </div>
+  <script>
+    var KEY = "itask-server-url";
+    var saved = localStorage.getItem(KEY);
+    var input = document.getElementById("url");
+    var err = document.getElementById("err");
+    if (saved) input.value = saved;
+
+    function connect(url) {
+      url = (url || "").trim().replace(/\/+$/, "");
+      if (!url) { err.textContent = "Nhập địa chỉ server"; return; }
+      if (!/^https?:\/\//.test(url)) url = "http://" + url;
+      err.textContent = "Đang kết nối…";
+      var probe = new Image();
+      var done = false;
+      var finish = function (ok) {
+        if (done) return; done = true;
+        if (ok) {
+          localStorage.setItem(KEY, url);
+          window.location.href = url + "/chat";
+        } else {
+          err.textContent = "Không kết nối được — kiểm tra server đang chạy và cùng mạng wifi";
+        }
+      };
+      probe.onload = function () { finish(true); };
+      probe.onerror = function () { finish(false); };
+      setTimeout(function () { finish(false); }, 5000);
+      probe.src = url + "/icon-192.png?t=" + Date.now();
+    }
+
+    document.getElementById("go").onclick = function () { connect(input.value); };
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") connect(input.value); });
+    if (saved) connect(saved);
+  </script>
+</body>
+</html>
