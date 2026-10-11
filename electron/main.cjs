@@ -76,10 +76,13 @@ function ensureServerExtracted(userData) {
   let lastErr = null;
   for (let attempt = 0; attempt < 3 && !fs.existsSync(serverJs); attempt++) {
     try {
+      // cwd + relative archive name: avoids the "C:" drive letter being
+      // parsed as a remote host by GNU tar, without needing --force-local
+      // (unsupported by the bsdtar shipped with Windows).
       require("child_process").execFileSync(
         "tar",
-        ["--force-local", "-xzf", tarball, "-C", tmp],
-        { windowsHide: true }
+        ["-xzf", path.basename(tarball), "-C", tmp],
+        { cwd: path.dirname(tarball), windowsHide: true }
       );
       fs.renameSync(path.join(tmp, "server"), serverDir);
     } catch (e) {
