@@ -58,25 +58,50 @@ function loadEnvFile(file, env) {
   }
 }
 
-// Extracts resources/server.tar.gz into userData when missing or when the
-// bundled version changed (app upgrade). Windows 10+ ships bsdtar in
-// System32; macOS/Linux have tar too.
+// Extracts resources/server.tar.gz into a versioned dir under userData.
+// Versioned dirs mean an upgrade never overwrites files that an orphaned
+// server child of the previous version may still hold open (Windows locks
+// in-use binaries) — the old dir is pruned once no longer needed.
+// Windows 10+ ships bsdtar in System32; macOS/Linux have tar too.
 function ensureServerExtracted(userData) {
-  const serverDir = path.join(userData, "server");
-  const versionFile = path.join(serverDir, ".version");
-  const stamped = fs.existsSync(versionFile)
-    ? fs.readFileSync(versionFile, "utf8").trim()
-    : null;
-  if (stamped === app.getVersion() && fs.existsSync(path.join(serverDir, "server.js"))) {
-    return serverDir;
-  }
+  const version = app.getVersion();
+  const serverDir = path.join(userData, `server-${version}`);
+  const serverJs = path.join(serverDir, "server.js");
+  if (fs.existsSync(serverJs)) return serverDir;
+
   const tarball = path.join(process.resourcesPath, "server.tar.gz");
-  fs.mkdirSync(userData, { recursive: true });
-  require("child_process").execFileSync(
-    "tar",
-    ["--force-local", "-xzf", tarball, "-C", userData],
-    { windowsHide: true }
-  );
+  const tmp = path.join(userData, `.extract-${process.pid}`);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.mkdirSync(tmp, { recursive: true });
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3 && !fs.existsSync(serverJs); attempt++) {
+    try {
+      require("child_process").execFileSync(
+        "tar",
+        ["--force-local", "-xzf", tarball, "-C", tmp],
+        { windowsHide: true }
+      );
+      fs.renameSync(path.join(tmp, "server"), serverDir);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+  if (!fs.existsSync(serverJs)) {
+    throw lastErr || new Error("server bundle extraction failed");
+  }
+
+  // Best-effort cleanup of older server-* dirs (a still-running orphan may
+  // lock them — fine, they get cleaned on a later launch).
+  try {
+    for (const e of fs.readdirSync(userData)) {
+      const isOld =
+        (e.startsWith("server-") && e !== `server-${version}`) || e === "server";
+      if (isOld) {
+        fs.rmSync(path.join(userData, e), { recursive: true, force: true });
+      }
+    }
+  } catch {}
   return serverDir;
 }
 
@@ -173,9 +198,15 @@ async function boot() {
     try {
       appUrl = await startEmbeddedServer();
     } catch (e) {
+      const detail = String(e?.message || e).replace(/</g, "&lt;");
       win.webContents.executeJavaScript(
         `document.body.innerHTML = ${JSON.stringify(
-          "Không khởi động được server nội bộ. Xem log trong %APPDATA%/iTask Bot/server.log"
+          "Không khởi động được server nội bộ.<br><br>" +
+            "<pre style='font-size:12px;color:#ef4444;max-width:80%;" +
+            "white-space:pre-wrap;text-align:left'>" +
+            detail +
+            "</pre><br>Log: %APPDATA%\\itask-bot\\server.log" +
+            "<br>Thử đóng hẳn app rồi mở lại."
         )}`
       );
       return;
