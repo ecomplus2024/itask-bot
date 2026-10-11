@@ -8,6 +8,7 @@
 // Dev mode: loads an already-running server — `npm run dev` then
 // `npm run electron`, or ITASK_URL=https://bot.company.com
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 const net = require("net");
@@ -204,9 +205,14 @@ ipcMain.on("win-close", (e) => {
 });
 
 app.whenReady().then(() => {
-  // Launch on Windows login so scheduled bots keep working.
   if (app.isPackaged) {
+    // Launch on Windows login so scheduled bots keep working.
     app.setLoginItemSettings({ openAtLogin: true });
+    // Check GitHub Releases for a newer version — downloads in the
+    // background and prompts to restart when ready.
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
   }
   boot();
 });

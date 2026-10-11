@@ -1,6 +1,6 @@
 {
   "name": "itask-bot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "main": "electron/main.cjs",
   "scripts": {
@@ -18,6 +18,11 @@
   },
   "build": {
     "appId": "vn.itask.bot",
+    "publish": {
+      "provider": "github",
+      "owner": "ecomplus2024",
+      "repo": "itask-bot"
+    },
     "productName": "iTask Bot",
     "files": [
       "electron/**/*",
@@ -60,6 +65,7 @@
     "@capacitor/ios": "^8.5.3",
     "better-sqlite3": "^12.11.1",
     "croner": "^9.1.0",
+    "electron-updater": "^6.8.9",
     "lucide-react": "^1.55.0",
     "next": "^16.4.0",
     "react": "^19.1.0",
