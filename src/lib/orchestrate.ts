@@ -66,7 +66,45 @@ export function loadRoomMessages(
   ).reverse();
 }
 
+// Deterministic fix for a stubborn model habit: trailing "Anh muốn em
+// đi sâu vào phần nào không ạ (A, B, hay C)?" offers. The question is
+// deleted; when it carries a parenthesized option list, the options are
+// converted into [[SUGGEST: ...]] chips instead of an open question.
+const TRAILING_OFFER_RE =
+  /[^?\n]*?(?:muốn|cần)\s+(?:em|mình|bạn|anh|chị)[^?\n]*\?\s*$|[^?\n]*?(?:would you like|want me to|do you want me|shall i)[^?\n]*\?\s*$/i;
+
+function convertTrailingOffer(content: string): string {
+  const m = TRAILING_OFFER_RE.exec(content);
+  if (!m) return content;
+
+  const question = m[0];
+  // Options look like "(đơn giao thất bại, ads, hay tồn kho)".
+  const pm = /\(([^()]*(?:[,，;]|\bhay\b|\bhoặc\b|\bor\b)[^()]*)\)/.exec(
+    question
+  );
+  let suggestions: string[] = [];
+  if (pm) {
+    suggestions = pm[1]
+      .split(/[,，;]|\s+hay\s+|\s+hoặc\s+|\s+or\s+/i)
+      .map((s) =>
+        s
+          .trim()
+          .replace(/^(?:và|and)\s+/i, "")
+          .replace(/[.…]+$/, "")
+      )
+      .filter((s) => s.length > 1 && s.length <= 60)
+      .slice(0, 4);
+  }
+
+  let out = content.slice(0, m.index).trimEnd();
+  if (suggestions.length >= 2) {
+    out += `\n\n[[SUGGEST: ${suggestions.join(" | ")}]]`;
+  }
+  return out;
+}
+
 function saveBotMessage(roomId: number, bot: Bot, content: string) {
+  content = convertTrailingOffer(content);
   // Bots sometimes paste the same /files/N link several times — keep the
   // first occurrence of each file id and drop repeats.
   const seen = new Set<string>();
