@@ -96,7 +96,11 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `- IMPORTANT: whenever the user asks you to do something LATER or ` +
     `PERIODICALLY ("X phút nữa", "sáng mai", "mỗi ngày", "báo cáo lại sau"...), ` +
     `you MUST call itask__schedule_task BEFORE replying — never just promise ` +
-    `verbally, a promise without the tool does nothing. Use in_minutes ` +
+    `verbally, a promise without the tool does nothing. "Later" means a ` +
+    `specific clock time or recurring cadence the user named — "ask X ` +
+    `then tell me" or "find out and report" is work you do RIGHT NOW in ` +
+    `this turn (contact colleagues via tools immediately). NEVER schedule ` +
+    `work you can simply do now. Use in_minutes ` +
     `for "in N minutes" one-time work, run_at (ISO datetime) only for a ` +
     `specific clock time, interval_minutes for elapsed recurrences ` +
     `("every N minutes/hours"), and cron + timezone for calendar-based ` +

@@ -129,22 +129,54 @@ async function* runBot(
     .join(", ");
   config.systemPrompt += `\n\nYou are in room "${roomInfo?.name ?? roomId}". Members present: ${roster}.`;
 
-  // Colleague directory: who to ask when work needs another bot's skills
-  // or data. itask__ask_bot runs the colleague and returns their answer
-  // synchronously — the tool for "I need X from them to finish MY task".
+  // Colleague directory + reachability map: for each colleague, which
+  // shared rooms can reach them. A colleague with no shared room is ONLY
+  // reachable via itask__ask_bot — broadcasting elsewhere can't get them.
   const colleagues = db
     .prepare(
-      "SELECT name, role FROM bots WHERE user_id = ? AND id != ? ORDER BY id"
+      "SELECT id, name, role FROM bots WHERE user_id = ? AND id != ? ORDER BY id"
     )
-    .all(userId, bot.id) as { name: string; role: string | null }[];
+    .all(userId, bot.id) as { id: number; name: string; role: string | null }[];
   if (colleagues.length) {
+    const sharedStmt = db.prepare(
+      `SELECT r.id, r.name FROM rooms r
+       JOIN room_members a ON a.room_id = r.id AND a.kind = 'bot' AND a.ref_id = ?
+       JOIN room_members b ON b.room_id = r.id AND b.kind = 'bot' AND b.ref_id = ?
+       WHERE r.user_id = ? AND r.id != ? AND r.kind != 'bot_dm'`
+    );
+    const directory = colleagues
+      .map((c) => {
+        const shared = (
+          sharedStmt.all(bot.id, c.id, userId, roomId) as {
+            id: number;
+            name: string | null;
+          }[]
+        ).map((r) => `#${r.id} "${r.name ?? "chat"}"`);
+        return (
+          `${c.name}${c.role ? ` — ${c.role}` : ""}` +
+          (shared.length
+            ? ` [shared rooms: ${shared.join(", ")}]`
+            : " [no shared room — private DM only]")
+        );
+      })
+      .join("; ");
+
     config.systemPrompt +=
-      `\n\nYour colleagues: ${colleagues
-        .map((c) => `${c.name}${c.role ? ` — ${c.role}` : ""}`)
-        .join("; ")}. ` +
-      `When you need a colleague's information or output to complete your ` +
-      `own task, call itask__ask_bot (it returns their answer to you ` +
-      `directly). To hand work off publicly, @mention them in your reply.`;
+      `\n\n## Reaching colleagues\n${directory}\n` +
+      `Choose the channel by what you need:\n` +
+      `- Need their ANSWER to finish YOUR task (data, file, analysis) → ` +
+      `itask__ask_bot: private, they reply directly to you. This is also ` +
+      `the ONLY way to reach a colleague with no shared room.\n` +
+      `- Hand work off openly in THIS room, or the exchange belongs in ` +
+      `this conversation → @mention them in your reply.\n` +
+      `- Delegate work to a GROUP or a specialist in another room, and you ` +
+      `do NOT need the result right now → itask__send_room_message to that ` +
+      `room with @mention. Their reply stays in that room.\n` +
+      `Reaching a colleague is a normal tool action you perform NOW in ` +
+      `this turn — NEVER schedule it for later just because it involves ` +
+      `another bot. Scheduling is only for work the user wants at a ` +
+      `future time. Keep private queries out of group rooms; keep things ` +
+      `the user should see out of DMs.`;
   }
 
   // Bot↔bot DM: the reply IS the work product handed to the colleague —
@@ -164,7 +196,8 @@ async function* runBot(
     .prepare(
       `SELECT r.id, r.name FROM rooms r
        JOIN room_members rm ON rm.room_id = r.id
-       WHERE rm.kind = 'bot' AND rm.ref_id = ? AND r.user_id = ? AND r.id != ?`
+       WHERE rm.kind = 'bot' AND rm.ref_id = ? AND r.user_id = ? AND r.id != ?
+         AND r.kind != 'bot_dm'`
     )
     .all(bot.id, userId, roomId) as { id: number; name: string | null }[];
   if (otherRooms.length) {
@@ -492,11 +525,12 @@ async function verifyActions(
   ];
   const scheduleCalled = schedTools.some((t) => calledTools.has(t));
   const rememberCalled = calledTools.has("itask__remember");
+  const delegateCalled =
+    calledTools.has("itask__ask_bot") ||
+    calledTools.has("itask__send_room_message");
 
-  // Nothing to verify: scheduling happened AND the reply doesn't claim
-  // memory work — but remembering can still be missing, so only skip the
-  // AI call when both concerns are already satisfied or irrelevant.
-  if (scheduleCalled && rememberCalled) return [];
+  // Nothing to verify when all concerns are already satisfied.
+  if (scheduleCalled && rememberCalled && delegateCalled) return [];
 
   try {
     const res = await chatOnce(
@@ -518,10 +552,17 @@ async function verifyActions(
             `it just created is fine.\n` +
             `- If the assistant claims it noted/saved/remembered/will ` +
             `remember something, itask__remember MUST have been called.\n` +
+            `- If the assistant says it asked/contacted/relayed to another ` +
+            `bot, delegated work, or promises to report a colleague's ` +
+            `answer, a contact tool (itask__ask_bot or ` +
+            `itask__send_room_message) MUST have been called. An @mention ` +
+            `inside the reply text does NOT count — only the tools reach ` +
+            `the colleague.\n` +
             `- If the user only shared information and the assistant merely ` +
-            `acknowledged receipt (no claim to store), no tool is required.\n` +
+            `acknowledged receipt (no claim to store or to contact anyone), ` +
+            `no tool is required.\n` +
             `Reply with a JSON object only, e.g. ` +
-            `{"missing": []} or {"missing": ["schedule", "remember"]}.`,
+            `{"missing": []} or {"missing": ["schedule", "remember", "delegate"]}.`,
         },
       ],
       { ...config, systemPrompt: "You are a strict JSON verifier." },
@@ -543,6 +584,11 @@ async function verifyActions(
     if (json.missing?.includes("remember") && !rememberCalled) {
       missing.push(
         "itask__remember — you said you noted/remembered something but nothing was stored"
+      );
+    }
+    if (json.missing?.includes("delegate") && !delegateCalled) {
+      missing.push(
+        "a colleague-contact tool — you said you would ask/notify another bot but never reached them. Use itask__ask_bot for a private question whose answer you need, or itask__send_room_message to delegate into a shared room (writing @Name in your reply does NOT contact them)."
       );
     }
     return missing;

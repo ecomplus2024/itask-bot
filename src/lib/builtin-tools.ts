@@ -819,10 +819,14 @@ export function getBuiltinTools(
         const content = String(args.content ?? "").trim();
         if (!content) return "content required";
         const room = db
-          .prepare("SELECT id, user_id FROM rooms WHERE id = ?")
-          .get(targetRoom) as { id: number; user_id: number } | undefined;
+          .prepare("SELECT id, user_id, kind FROM rooms WHERE id = ?")
+          .get(targetRoom) as
+          | { id: number; user_id: number; kind?: string }
+          | undefined;
         if (!room || room.user_id !== userId)
           return `No room with id ${targetRoom}`;
+        if (room.kind === "bot_dm")
+          return "That's your private colleague channel — use itask__ask_bot so their answer comes back to you.";
         const member = db
           .prepare(
             "SELECT 1 FROM room_members WHERE room_id = ? AND kind = 'bot' AND ref_id = ?"
