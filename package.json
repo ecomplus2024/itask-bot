@@ -18,6 +18,7 @@
   },
   "build": {
     "appId": "vn.itask.bot",
+    "npmRebuild": false,
     "publish": {
       "provider": "github",
       "owner": "ecomplus2024",
