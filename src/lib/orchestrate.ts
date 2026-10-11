@@ -398,8 +398,9 @@ async function* runBot(
             content:
               `Rewrite the following as a short, natural chat message in the ` +
               `same language: max ~4 short lines, keep only the essential ` +
-              `facts and any direct question, drop headings and lecture ` +
-              `format. Output the rewritten message only.\n\n${answer}`,
+              `facts, drop headings, lecture format, and any trailing ` +
+              `follow-up question or offer of more detail. Output the ` +
+              `rewritten message only.\n\n${answer}`,
           },
         ],
         { ...config, systemPrompt: "You condense text." },
