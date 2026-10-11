@@ -22,6 +22,7 @@ type Room = {
   id: number;
   name: string;
   direct_bot_id: number | null;
+  kind?: string;
   updated_at: string;
   bots: Bot[];
 };
@@ -130,7 +131,7 @@ export default function ChatApp({
   useEffect(() => {
     if (autoOpened.current || activeRoom || rooms.length === 0) return;
     autoOpened.current = true;
-    openRoom(rooms[0]);
+    openRoom(rooms.find((r) => r.kind !== "bot_dm") ?? rooms[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rooms, activeRoom]);
 
@@ -474,10 +475,13 @@ export default function ChatApp({
             </button>
           </div>
           <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-0.5">
-            {rooms.filter((r) => !r.direct_bot_id).length === 0 && (
+            {rooms.filter((r) => !r.direct_bot_id && r.kind !== "bot_dm")
+              .length === 0 && (
               <p className="px-1 py-2 text-xs text-zinc-500">{t("noRooms")}</p>
             )}
-            {rooms.filter((r) => !r.direct_bot_id).map((r) => {
+            {rooms
+              .filter((r) => !r.direct_bot_id && r.kind !== "bot_dm")
+              .map((r) => {
               const roomBusy = r.bots.some((rb) =>
                 bots.find((b) => b.id === rb.id)?.thinking
               );
@@ -529,6 +533,56 @@ export default function ChatApp({
               </div>
               );
             })}
+
+            {/* Bot↔bot channels — watch colleagues coordinate */}
+            {rooms.some((r) => r.kind === "bot_dm") && (
+              <>
+                <p className="px-1 pt-4 pb-1 text-xs font-semibold uppercase text-zinc-500">
+                  {t("botChats")}
+                </p>
+                {rooms
+                  .filter((r) => r.kind === "bot_dm")
+                  .map((r) => {
+                    const roomBusy = r.bots.some((rb) =>
+                      bots.find((b) => b.id === rb.id)?.thinking
+                    );
+                    return (
+                      <div
+                        key={r.id}
+                        onClick={() => openRoom(r)}
+                        className={`group flex items-center gap-2 rounded-lg px-2 py-2 cursor-pointer ${
+                          activeRoom?.id === r.id
+                            ? "bg-zinc-200 dark:bg-zinc-800"
+                            : "hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm truncate flex items-center gap-1.5">
+                            {r.name}
+                            {roomBusy && (
+                              <span className="typing-dots text-emerald-500 scale-75 origin-left shrink-0">
+                                <span />
+                                <span />
+                                <span />
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <button
+                          title={t("delete")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteRoom(r.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-red-500 px-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+              </>
+            )}
           </div>
 
           <div className="relative border-t border-zinc-200 dark:border-zinc-800 p-3">

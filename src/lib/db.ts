@@ -222,6 +222,15 @@ for (const [col, ddl] of [
   }
 }
 
+// Migrate: rooms.kind — 'bot_dm' marks private bot↔bot channels created by
+// itask__ask_bot. Regular user rooms are 'normal'.
+{
+  const cols = db.pragma("table_info(rooms)") as { name: string }[];
+  if (!cols.some((c) => c.name === "kind")) {
+    db.exec(`ALTER TABLE rooms ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'`);
+  }
+}
+
 // Skills and MCP servers are shared across all bots — normalize legacy
 // per-bot assignments to shared (bot_id = NULL).
 db.exec("UPDATE skills SET bot_id = NULL WHERE bot_id IS NOT NULL");

@@ -17,10 +17,18 @@ const FILE_MIME: Record<string, string> = {
  * Built-in tools that let the AI manage its own skills and MCP servers.
  * Names are prefixed itask__ to avoid collisions with MCP tools.
  */
+// Limits for synchronous colleague chains (ask_bot): A→B→C is fine, deeper
+// nesting balloons latency and cost. A global in-flight cap also protects
+// the shared AI gateway when several rooms delegate at once.
+const MAX_COLLAB_DEPTH = 2;
+const MAX_ACTIVE_ASKS = 4;
+let activeAsks = 0;
+
 export function getBuiltinTools(
   userId: number,
   botId?: number,
-  roomId?: number
+  roomId?: number,
+  collabDepth = 0
 ): {
   tools: OpenAITool[];
   execute: (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -225,6 +233,34 @@ export function getBuiltinTools(
               },
             },
           },
+          ...(collabDepth < MAX_COLLAB_DEPTH
+            ? [
+                {
+                  type: "function" as const,
+                  function: {
+                    name: "itask__ask_bot",
+                    description:
+                      "Ask a colleague bot a direct question and get their answer back immediately — use it when you need their expertise or data to complete your own work (e.g. ask the sales bot for numbers before writing a report). The exchange happens in your private bot↔bot channel and is visible to the user. For public hand-offs in the current room just @mention instead; for delegating work to another group without needing the answer now, use itask__send_room_message.",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        bot: {
+                          type: "string",
+                          description:
+                            "Colleague name — full name or short form, see 'Your colleagues' in your context",
+                        },
+                        question: {
+                          type: "string",
+                          description:
+                            "What to ask or delegate — include all context they need (they do not see this room's chat)",
+                        },
+                      },
+                      required: ["bot", "question"],
+                    },
+                  },
+                },
+              ]
+            : []),
           {
             type: "function" as const,
             function: {
@@ -718,6 +754,64 @@ export function getBuiltinTools(
         return r.changes
           ? JSON.stringify({ ok: true })
           : `No task with id ${args.id} found`;
+      }
+      case "itask__ask_bot": {
+        if (!botId) return "Colleague messaging is only available to bots";
+        const targetName = String(args.bot ?? "").trim();
+        const question = String(args.question ?? "").trim();
+        if (!targetName || !question) return "bot and question are required";
+
+        const { findBotByName, getOrCreateBotDM } = await import("./bots");
+        const target = findBotByName(userId, targetName);
+        if (!target) return `No colleague named "${targetName}"`;
+        if (target.id === botId) return "You cannot ask yourself";
+        if (activeAsks >= MAX_ACTIVE_ASKS)
+          return "Too many colleague requests in flight — try again in a moment";
+
+        const me = db
+          .prepare("SELECT name FROM bots WHERE id = ?")
+          .get(botId) as { name: string } | undefined;
+        const dmId = getOrCreateBotDM(
+          userId,
+          botId,
+          me?.name ?? "Bot",
+          target.id,
+          target.name
+        );
+        db.prepare(
+          `INSERT INTO room_messages (room_id, kind, sender_id, sender_name, content)
+           VALUES (?, 'bot', ?, ?, ?)`
+        ).run(dmId, botId, me?.name ?? "Bot", question);
+        db.prepare(
+          "UPDATE rooms SET updated_at = datetime('now') WHERE id = ?"
+        ).run(dmId);
+        notifyRoomChanged(dmId);
+
+        // Run the colleague's turn and wait for the answer — it is the
+        // whole point of asking. Cap the wait: on timeout the turn keeps
+        // running and the reply lands in the DM room for later reading.
+        activeAsks++;
+        try {
+          const { runBotInstruction } = await import("./orchestrate");
+          const reply = await Promise.race([
+            runBotInstruction(
+              dmId,
+              userId,
+              target,
+              undefined,
+              false,
+              collabDepth + 1
+            ),
+            new Promise<string>((resolve) =>
+              setTimeout(() => resolve(""), 120_000)
+            ),
+          ]);
+          return reply && reply !== "…"
+            ? `${target.name} replies: ${reply}`
+            : `${target.name} is still working on it — their reply will appear in your private channel. Continue with what you have or check back later.`;
+        } finally {
+          activeAsks--;
+        }
       }
       case "itask__send_room_message": {
         if (!botId) return "Room messaging is only available to bots";

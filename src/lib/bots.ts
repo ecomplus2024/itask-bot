@@ -166,3 +166,61 @@ export function resolveResponders(
 export function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/**
+ * Resolves a colleague by name: exact alias match first, then a substring
+ * match — the same fuzzy naming people use in chat ("Mai Anh", "hưng").
+ */
+export function findBotByName(userId: number, name: string): Bot | undefined {
+  const bots = db
+    .prepare("SELECT * FROM bots WHERE user_id = ? ORDER BY id")
+    .all(userId) as Bot[];
+  const q = name.trim().replace(/^@/, "").toLowerCase();
+  if (!q) return undefined;
+  return (
+    bots.find((b) =>
+      botNameAliases(b.name).some((a) => a.toLowerCase() === q)
+    ) ?? bots.find((b) => b.name.toLowerCase().includes(q))
+  );
+}
+
+/**
+ * Finds or creates the private bot↔bot channel for a pair of colleagues.
+ * Itask__ask_bot conversations live here: a real room (kind='bot_dm') so
+ * history, memory, tools and the WS stream all work unchanged — and the
+ * user can watch the exchange in the UI. The pair is keyed by the two bot
+ * ids, so A→B and B→A share one channel like a real DM.
+ */
+export function getOrCreateBotDM(
+  userId: number,
+  aId: number,
+  aName: string,
+  bId: number,
+  bName: string
+): number {
+  const [lo, hi] = aId < bId ? [aId, bId] : [bId, aId];
+  const row = db
+    .prepare(
+      `SELECT r.id FROM rooms r
+       JOIN room_members m1 ON m1.room_id = r.id AND m1.kind = 'bot' AND m1.ref_id = ?
+       JOIN room_members m2 ON m2.room_id = r.id AND m2.kind = 'bot' AND m2.ref_id = ?
+       WHERE r.user_id = ? AND r.kind = 'bot_dm'`
+    )
+    .get(lo, hi, userId) as { id: number } | undefined;
+  if (row) return row.id;
+
+  const r = db
+    .prepare(
+      "INSERT INTO rooms (user_id, name, kind) VALUES (?, ?, 'bot_dm')"
+    )
+    .run(userId, `${aName} ↔ ${bName}`);
+  const roomId = Number(r.lastInsertRowid);
+  const ins = db.prepare(
+    "INSERT OR IGNORE INTO room_members (room_id, kind, ref_id) VALUES (?, ?, ?)"
+  );
+  ins.run(roomId, "bot", aId);
+  ins.run(roomId, "bot", bId);
+  // The user is a member too — they can read along and jump in.
+  ins.run(roomId, "user", userId);
+  return roomId;
+}

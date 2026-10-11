@@ -7,7 +7,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const rooms = db
     .prepare(
-      `SELECT r.id, r.name, r.direct_bot_id, r.created_at, r.updated_at FROM rooms r
+      `SELECT r.id, r.name, r.direct_bot_id, r.kind, r.created_at, r.updated_at FROM rooms r
        WHERE r.user_id = ? ORDER BY r.updated_at DESC`
     )
     .all(user.id);

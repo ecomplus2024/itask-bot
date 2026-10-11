@@ -100,15 +100,17 @@ async function* runBot(
   roomId: number,
   userId: number,
   allowSilent = true,
-  hiddenInstruction?: string
+  hiddenInstruction?: string,
+  collabDepth = 0
 ): AsyncGenerator<RoomEvent, string> {
   const config = resolveBotConfig(bot);
 
   // Tell the bot exactly who shares this room, so it never wrongly
   // claims a member "is not in the room".
   const roomInfo = db
-    .prepare("SELECT name FROM rooms WHERE id = ?")
-    .get(roomId) as { name: string | null } | undefined;
+    .prepare("SELECT name, kind FROM rooms WHERE id = ?")
+    .get(roomId) as { name: string | null; kind?: string } | undefined;
+  const isBotDM = roomInfo?.kind === "bot_dm";
   const memberRows = db
     .prepare(
       `SELECT rm.kind, COALESCE(b.name, u.name) AS name
@@ -126,6 +128,34 @@ async function* runBot(
     )
     .join(", ");
   config.systemPrompt += `\n\nYou are in room "${roomInfo?.name ?? roomId}". Members present: ${roster}.`;
+
+  // Colleague directory: who to ask when work needs another bot's skills
+  // or data. itask__ask_bot runs the colleague and returns their answer
+  // synchronously — the tool for "I need X from them to finish MY task".
+  const colleagues = db
+    .prepare(
+      "SELECT name, role FROM bots WHERE user_id = ? AND id != ? ORDER BY id"
+    )
+    .all(userId, bot.id) as { name: string; role: string | null }[];
+  if (colleagues.length) {
+    config.systemPrompt +=
+      `\n\nYour colleagues: ${colleagues
+        .map((c) => `${c.name}${c.role ? ` — ${c.role}` : ""}`)
+        .join("; ")}. ` +
+      `When you need a colleague's information or output to complete your ` +
+      `own task, call itask__ask_bot (it returns their answer to you ` +
+      `directly). To hand work off publicly, @mention them in your reply.`;
+  }
+
+  // Bot↔bot DM: the reply IS the work product handed to the colleague —
+  // the usual ~4-line chat limit would truncate it, so completeness wins.
+  if (isBotDM) {
+    config.systemPrompt +=
+      `\n\nThis is your private channel with a colleague. They contacted ` +
+      `you for help — give the FULL answer or work result they need ` +
+      `(data, files, analysis), not a 4-line summary. Be complete but ` +
+      `focused; skip small talk.`;
+  }
 
   // List the OTHER rooms this bot belongs to, with ids and members, so
   // it can resolve references like "nhóm công việc" and delegate work
@@ -187,7 +217,7 @@ async function* runBot(
     }
   }
 
-  const builtin = getBuiltinTools(userId, bot.id, roomId);
+  const builtin = getBuiltinTools(userId, bot.id, roomId, collabDepth);
   const mcp = await getMcpTools(userId);
   const tools: OpenAITool[] = [...builtin.tools, ...mcp.tools];
   const execute = (name: string, args: Record<string, unknown>) =>
@@ -406,7 +436,8 @@ export async function runBotInstruction(
   userId: number,
   bot: Bot,
   instruction?: string,
-  allowSilent = false
+  allowSilent = false,
+  collabDepth = 0
 ): Promise<string> {
   // runBot persists the reply itself; scheduled tasks must produce output,
   // so silence is not allowed there — proactive check-ins may stay silent.
@@ -414,7 +445,14 @@ export async function runBotInstruction(
   // except the bot's reply.
   markBotRunning(bot.id);
   try {
-    const gen = runBot(bot, roomId, userId, allowSilent, instruction);
+    const gen = runBot(
+      bot,
+      roomId,
+      userId,
+      allowSilent,
+      instruction,
+      collabDepth
+    );
     let content = "";
     while (true) {
       const { value, done } = await gen.next();
