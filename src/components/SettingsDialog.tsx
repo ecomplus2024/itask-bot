@@ -12,8 +12,17 @@ type FormState = {
   aiSystemPrompt: string;
 };
 
-const SECTIONS = ["aiConfig", "skills", "mcp"] as const;
+const SECTIONS = ["aiConfig", "skills", "mcp", "update"] as const;
 type Section = (typeof SECTIONS)[number];
+
+type UpdateState =
+  | { phase: "idle" }
+  | { phase: "checking" }
+  | { phase: "up-to-date" }
+  | { phase: "available"; version: string }
+  | { phase: "downloading"; percent: number }
+  | { phase: "ready"; version: string }
+  | { phase: "error"; message: string };
 
 export default function SettingsDialog({
   open,
@@ -37,6 +46,29 @@ export default function SettingsDialog({
     hasEnvKey: boolean;
   } | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [version, setVersion] = useState("");
+  const [upd, setUpd] = useState<UpdateState>({ phase: "idle" });
+  const isDesktop =
+    typeof window !== "undefined" && !!(window as any).itaskDesktop;
+
+  useEffect(() => {
+    if (!open || !isDesktop) return;
+    const d = (window as any).itaskDesktop;
+    d.getVersion?.().then(setVersion).catch(() => {});
+    const off = d.onUpdateEvent?.((ev: any) => {
+      if (ev.type === "checking") setUpd({ phase: "checking" });
+      else if (ev.type === "not-available") setUpd({ phase: "up-to-date" });
+      else if (ev.type === "available")
+        setUpd({ phase: "available", version: ev.version });
+      else if (ev.type === "progress")
+        setUpd({ phase: "downloading", percent: ev.percent });
+      else if (ev.type === "downloaded")
+        setUpd({ phase: "ready", version: ev.version });
+      else if (ev.type === "error")
+        setUpd({ phase: "error", message: ev.message });
+    });
+    return off;
+  }, [open, isDesktop]);
 
   useEffect(() => {
     if (!open) return;
@@ -95,7 +127,7 @@ export default function SettingsDialog({
           <p className="px-2 pb-2 text-xs font-semibold uppercase text-zinc-500">
             {t("settings")}
           </p>
-          {SECTIONS.map((s) => (
+          {SECTIONS.filter((s) => s !== "update" || isDesktop).map((s) => (
             <button
               key={s}
               onClick={() => setSection(s)}
@@ -124,6 +156,58 @@ export default function SettingsDialog({
           </div>
 
           <div className="flex-1 overflow-y-auto p-5">
+            {section === "update" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-xl border border-zinc-200 dark:border-zinc-800 px-4 py-3">
+                  <div>
+                    <p className="text-sm text-zinc-500">{t("appVersion")}</p>
+                    <p className="font-medium">v{version || "…"}</p>
+                  </div>
+                  {upd.phase === "checking" ? (
+                    <span className="text-sm text-zinc-500">{t("checking")}</span>
+                  ) : upd.phase === "up-to-date" ? (
+                    <span className="text-sm text-green-600">{t("upToDate")}</span>
+                  ) : upd.phase === "available" ? (
+                    <button
+                      onClick={() => (window as any).itaskDesktop.downloadUpdate()}
+                      className="rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium hover:opacity-90"
+                    >
+                      {t("newVersionFound")} v{upd.version} — {t("downloadUpdate")}
+                    </button>
+                  ) : upd.phase === "downloading" ? (
+                    <span className="text-sm text-zinc-500">
+                      {t("downloading")} {upd.percent}%
+                    </span>
+                  ) : upd.phase === "ready" ? (
+                    <button
+                      onClick={() => (window as any).itaskDesktop.installUpdate()}
+                      className="rounded-lg bg-green-600 text-white px-4 py-2 text-sm font-medium hover:opacity-90"
+                    >
+                      {t("restartToUpdate")}
+                    </button>
+                  ) : upd.phase === "error" ? (
+                    <span className="text-sm text-red-500" title={upd.message}>
+                      {t("updateFailed")}
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => (window as any).itaskDesktop.checkUpdate()}
+                      className="rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium hover:opacity-90"
+                    >
+                      {t("checkUpdate")}
+                    </button>
+                  )}
+                </div>
+                {upd.phase === "downloading" && (
+                  <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+                    <div
+                      className="h-full bg-zinc-900 dark:bg-zinc-100 transition-all"
+                      style={{ width: `${upd.percent}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
             {section === "skills" && <SkillsPanel />}
             {section === "mcp" && <McpPanel />}
             {section === "aiConfig" && (

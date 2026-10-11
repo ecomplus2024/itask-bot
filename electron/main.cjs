@@ -16,6 +16,7 @@ const http = require("http");
 const { spawn } = require("child_process");
 
 let serverProc = null;
+let winRef = null;
 let appUrl = process.env.ITASK_URL || "http://localhost:3000/chat";
 
 function freePort() {
@@ -157,6 +158,7 @@ function createWindow() {
 
 async function boot() {
   const win = createWindow();
+  winRef = win;
   // Show something immediately while the embedded server boots.
   win.loadURL(
     "data:text/html;charset=utf-8," +
@@ -204,15 +206,41 @@ ipcMain.on("win-close", (e) => {
   BrowserWindow.fromWebContents(e.sender)?.close();
 });
 
+// Manual update flow — the renderer triggers each step and receives
+// "update-event" messages with {type, ...payload}.
+function sendUpdate(win, payload) {
+  win?.webContents.send("update-event", payload);
+}
+autoUpdater.on("update-available", (info) =>
+  sendUpdate(winRef, { type: "available", version: info.version })
+);
+autoUpdater.on("update-not-available", () =>
+  sendUpdate(winRef, { type: "not-available" })
+);
+autoUpdater.on("download-progress", (p) =>
+  sendUpdate(winRef, { type: "progress", percent: Math.round(p.percent) })
+);
+autoUpdater.on("update-downloaded", (info) =>
+  sendUpdate(winRef, { type: "downloaded", version: info.version })
+);
+autoUpdater.on("error", (e) =>
+  sendUpdate(winRef, { type: "error", message: String(e?.message || e) })
+);
+ipcMain.handle("app-version", () => app.getVersion());
+ipcMain.handle("update-check", async () => {
+  sendUpdate(winRef, { type: "checking" });
+  await autoUpdater.checkForUpdates();
+});
+ipcMain.handle("update-download", () => autoUpdater.downloadUpdate());
+ipcMain.handle("update-install", () => autoUpdater.quitAndInstall());
+
 app.whenReady().then(() => {
   if (app.isPackaged) {
     // Launch on Windows login so scheduled bots keep working.
     app.setLoginItemSettings({ openAtLogin: true });
-    // Check GitHub Releases for a newer version — downloads in the
-    // background and prompts to restart when ready.
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+    // Updates are manual — the Settings dialog drives check → download →
+    // install through the IPC handlers below.
+    autoUpdater.autoDownload = false;
   }
   boot();
 });
