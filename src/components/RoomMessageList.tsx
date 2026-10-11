@@ -59,14 +59,33 @@ function TypingDots() {
   );
 }
 
+// Bots end replies at decision points with [[SUGGEST: A | B | C]] — the
+// marker is stripped from the text and rendered as tap-to-send chips.
+const SUGGEST_RE = /\[\[\s*SUGGEST\s*:\s*([^\]]+)\]\]/i;
+function parseSuggestions(content: string): {
+  text: string;
+  suggestions: string[];
+} {
+  const m = SUGGEST_RE.exec(content);
+  if (!m) return { text: content, suggestions: [] };
+  const suggestions = m[1]
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  return { text: content.replace(SUGGEST_RE, "").trim(), suggestions };
+}
+
 export default function RoomMessageList({
   messages,
   streaming,
   thinkingBot,
+  onSuggestion,
 }: {
   messages: RoomMsg[];
   streaming: boolean;
   thinkingBot?: { id: number; name: string; avatar?: string };
+  onSuggestion?: (text: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [previewFileId, setPreviewFileId] = useState<number | null>(null);
@@ -87,6 +106,9 @@ export default function RoomMessageList({
           const isFirst = !sameSender(messages[i - 1], m);
           const isGroupEnd = !sameSender(m, messages[i + 1]);
           const isLast = i === messages.length - 1;
+          const parsed = isUser
+            ? { text: m.content, suggestions: [] }
+            : parseSuggestions(m.content);
           return (
             <div
               key={m.id ?? `s${i}`}
@@ -121,7 +143,7 @@ export default function RoomMessageList({
                     m.content
                   ) : (
                     <>
-                      {m.content ? (
+                      {parsed.text ? (
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
@@ -163,7 +185,7 @@ export default function RoomMessageList({
                             },
                           }}
                         >
-                          {m.content}
+                          {parsed.text}
                         </ReactMarkdown>
                       ) : m.streaming ? (
                         <TypingDots />
@@ -174,6 +196,22 @@ export default function RoomMessageList({
                     </>
                   )}
                 </div>
+                {!isUser &&
+                  isLast &&
+                  !m.streaming &&
+                  parsed.suggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {parsed.suggestions.map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => onSuggestion?.(s)}
+                          className="rounded-full border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3.5 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:border-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 {isGroupEnd && fmtTime(m.created_at) && (
                   <p
                     className={`text-[10px] text-zinc-400 mt-0.5 ${

@@ -753,6 +753,7 @@ export default function ChatApp({
                       )
                     : undefined
                 }
+                onSuggestion={(text) => send(text)}
               />
             )}
             <div className="px-4 pb-4">

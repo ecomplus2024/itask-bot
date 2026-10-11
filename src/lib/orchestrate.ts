@@ -399,7 +399,8 @@ async function* runBot(
               `Rewrite the following as a short, natural chat message in the ` +
               `same language: max ~4 short lines, keep only the essential ` +
               `facts, drop headings, lecture format, and any trailing ` +
-              `follow-up question or offer of more detail. Output the ` +
+              `follow-up question or offer of more detail. Keep a final ` +
+              `[[SUGGEST: ...]] line intact if present. Output the ` +
               `rewritten message only.\n\n${answer}`,
           },
         ],
