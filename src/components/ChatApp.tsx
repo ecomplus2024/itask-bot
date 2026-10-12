@@ -1068,7 +1068,6 @@ export default function ChatApp({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{user.name}</p>
-                <p className="truncate text-xs text-zinc-500">{user.email}</p>
               </div>
               <svg
                 width="14"

@@ -3,8 +3,9 @@ import { createUser, createSession, setSessionCookie } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, name, password } = await req.json();
-    if (!email || !password || !name) {
+    const { username, email, name, password } = await req.json();
+    const login = (username || email || "").trim();
+    if (!login || !password || !name) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const user = createUser(email, name, password);
+    const user = createUser(login, name, password);
     const token = createSession(user.id);
     await setSessionCookie(token);
     return NextResponse.json({ user });
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
     const msg = e instanceof Error ? e.message : "";
     if (msg.includes("UNIQUE")) {
       return NextResponse.json(
-        { error: "Email already registered" },
+        { error: "Username already taken" },
         { status: 409 }
       );
     }

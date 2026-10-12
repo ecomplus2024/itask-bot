@@ -6,7 +6,7 @@ import { useT } from "@/lib/i18n";
 
 export default function LoginPage() {
   const { t } = useT();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,7 +20,7 @@ export default function LoginPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ username, password }),
       });
       if (res.ok) {
         // Full reload: guarantees the just-set session cookie is sent,
@@ -43,11 +43,12 @@ export default function LoginPage() {
       >
         <h1 className="text-2xl font-semibold text-center">{t("appName")}</h1>
         <input
-          type="email"
+          type="text"
           required
-          placeholder={t("email")}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="username"
+          placeholder={t("username")}
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
           className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 outline-none focus:ring-2 focus:ring-zinc-500"
         />
         <input
