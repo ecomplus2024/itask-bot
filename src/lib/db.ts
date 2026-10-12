@@ -242,6 +242,18 @@ for (const [col, ddl] of [
   }
 }
 
+// Migrate: structured memory — 'core' facts (always loaded), 'note' topic
+// notes (loaded when relevant), 'log' daily activity entries (recent only).
+{
+  const cols = db.pragma("table_info(bot_memories)") as { name: string }[];
+  if (!cols.some((c) => c.name === "kind")) {
+    db.exec(
+      `ALTER TABLE bot_memories ADD COLUMN kind TEXT NOT NULL DEFAULT 'core'`
+    );
+    db.exec(`ALTER TABLE bot_memories ADD COLUMN topic TEXT`);
+  }
+}
+
 // Skills and MCP servers are shared across all bots — normalize legacy
 // per-bot assignments to shared (bot_id = NULL).
 db.exec("UPDATE skills SET bot_id = NULL WHERE bot_id IS NOT NULL");

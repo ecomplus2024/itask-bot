@@ -19,7 +19,21 @@ export type BotData = {
   proactive_minutes: number;
 };
 
-type Memory = { id: number; content: string; created_at: string };
+type Memory = {
+  id: number;
+  kind: "core" | "note" | "log";
+  topic: string | null;
+  content: string;
+  created_at: string;
+};
+
+type PromptSection = {
+  id: string;
+  label: string;
+  bytes: number;
+  tokens: number;
+  text: string;
+};
 
 type Task = {
   id: number;
@@ -43,6 +57,7 @@ const TABS = [
   "mcp",
   "memories",
   "tasks",
+  "prompt",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -69,6 +84,13 @@ export default function BotDialog({
   });
   const [memories, setMemories] = useState<Memory[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [promptInfo, setPromptInfo] = useState<{
+    model: string;
+    room_id: number;
+    sections: PromptSection[];
+    est_tokens: number;
+  } | null>(null);
+  const [promptLoading, setPromptLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [botId, setBotId] = useState<number | null>(bot?.id ?? null);
 
@@ -92,6 +114,16 @@ export default function BotDialog({
         .then((d) => setTasks(d.tasks ?? []));
     }
   }, [bot]);
+
+  // Lazy-load the prompt preview ("what the model sees") on first open.
+  useEffect(() => {
+    if (tab !== "prompt" || !botId || promptInfo || promptLoading) return;
+    setPromptLoading(true);
+    fetch(`/api/bots/${botId}/prompt`)
+      .then((r) => r.json())
+      .then((d) => setPromptInfo(d.error ? null : d))
+      .finally(() => setPromptLoading(false));
+  }, [tab, botId, promptInfo, promptLoading]);
 
   async function save() {
     if (!form.name.trim()) return;
@@ -379,7 +411,22 @@ export default function BotDialog({
                     key={m.id}
                     className="flex items-start gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2"
                   >
-                    <p className="flex-1 text-sm">{m.content}</p>
+                    <span
+                      className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        m.kind === "note"
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                          : m.kind === "log"
+                            ? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                            : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                      }`}
+                    >
+                      {m.kind === "note"
+                        ? m.topic || t("memNote")
+                        : m.kind === "log"
+                          ? t("memLog")
+                          : t("memCore")}
+                    </span>
+                    <p className="flex-1 text-sm break-words">{m.content}</p>
                     <button
                       onClick={() => deleteMemory(m.id)}
                       className="text-xs text-zinc-400 hover:text-red-500"
@@ -398,6 +445,49 @@ export default function BotDialog({
                 )}
               </div>
             )}
+
+            {tab === "prompt" &&
+              (botId ? (
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 -mt-1 mb-1">
+                    {t("promptDesc")}
+                    {promptInfo && (
+                      <span className="ml-1 font-medium text-zinc-600 dark:text-zinc-400">
+                        {promptInfo.model} · ~{promptInfo.est_tokens} tokens ·{" "}
+                        {t("room")} #{promptInfo.room_id}
+                      </span>
+                    )}
+                  </p>
+                  {promptLoading && (
+                    <p className="text-sm text-zinc-500 py-4 text-center">…</p>
+                  )}
+                  {promptInfo?.sections.map((s) => (
+                    <details
+                      key={s.id}
+                      className="rounded-lg border border-zinc-200 dark:border-zinc-800"
+                    >
+                      <summary className="cursor-pointer px-3 py-2 text-sm font-medium flex items-center justify-between">
+                        <span>{s.label}</span>
+                        <span className="text-[10px] font-normal text-zinc-400">
+                          {(s.bytes / 1024).toFixed(1)} KB · ~{s.tokens} tok
+                        </span>
+                      </summary>
+                      <pre className="px-3 pb-3 text-xs whitespace-pre-wrap break-words text-zinc-600 dark:text-zinc-400 max-h-64 overflow-y-auto">
+                        {s.text}
+                      </pre>
+                    </details>
+                  ))}
+                  {!promptLoading && !promptInfo && (
+                    <p className="text-sm text-zinc-500 py-4 text-center">
+                      {t("promptEmpty")}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-zinc-500 text-center py-6">
+                  {t("save")} bot trước
+                </p>
+              ))}
 
             {tab === "tasks" &&
               (botId ? (

@@ -44,13 +44,24 @@ export function getBuiltinTools(
             function: {
               name: "itask__remember",
               description:
-                "Save an important fact, preference, date/deadline or decision to your long-term memory. ALWAYS use this tool (NOT itask__create_skill) to store facts about the user, company or conversation. Memories are injected into your context in every future conversation.",
+                "Save information to your long-term memory. ALWAYS use this tool (NOT itask__create_skill) to store facts about the user, company or conversation. Kinds: 'core' = durable facts/preferences/deadlines, always loaded into your context — use this by default and keep it short; 'note' = a longer note about a specific topic (project details, procedures, reference material), loaded only when the conversation touches that topic.",
               parameters: {
                 type: "object",
                 properties: {
                   content: {
                     type: "string",
-                    description: "The fact to remember, concise",
+                    description: "The fact or note to remember",
+                  },
+                  kind: {
+                    type: "string",
+                    enum: ["core", "note"],
+                    description:
+                      "'core' (default) for short durable facts, 'note' for longer topic-specific notes",
+                  },
+                  topic: {
+                    type: "string",
+                    description:
+                      "For kind='note': the subject this note is about (e.g. 'quy trình hoàn đơn')",
                   },
                 },
                 required: ["content"],
@@ -453,9 +464,13 @@ export function getBuiltinTools(
     switch (name) {
       case "itask__remember": {
         if (!botId) return "Memory is only available to bots";
+        const kind = args.kind === "note" ? "note" : "core";
+        const topic = args.topic ? String(args.topic).trim() || null : null;
         const r = db
-          .prepare("INSERT INTO bot_memories (bot_id, content) VALUES (?, ?)")
-          .run(botId, String(args.content ?? "").trim());
+          .prepare(
+            "INSERT INTO bot_memories (bot_id, kind, topic, content) VALUES (?, ?, ?, ?)"
+          )
+          .run(botId, kind, topic, String(args.content ?? "").trim());
         return JSON.stringify({ ok: true, id: Number(r.lastInsertRowid) });
       }
       case "itask__list_memories": {
@@ -463,7 +478,8 @@ export function getBuiltinTools(
         return JSON.stringify(
           db
             .prepare(
-              "SELECT id, content, created_at FROM bot_memories WHERE bot_id = ? ORDER BY id DESC LIMIT 100"
+              `SELECT id, kind, topic, content, created_at FROM bot_memories
+               WHERE bot_id = ? AND kind != 'log' ORDER BY id DESC LIMIT 100`
             )
             .all(botId)
         );

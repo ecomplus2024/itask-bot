@@ -1,7 +1,10 @@
 import db from "./db";
 import {
   Bot,
+  getBotRecentLogs,
+  getBotTopicNotes,
   getRoomBots,
+  logBotActivity,
   resolveBotConfig,
   resolveResponders,
 } from "./bots";
@@ -130,17 +133,44 @@ function saveBotMessage(roomId: number, bot: Bot, content: string) {
     .get(r.lastInsertRowid) as RoomMessage;
 }
 
+// Records a named prompt section (id/label/text) and appends it to the
+// system prompt — so the "what the model sees" preview shows the same
+// bytes the model receives, split into inspectable parts.
+function addPart(
+  config: ReturnType<typeof resolveBotConfig>,
+  id: string,
+  label: string,
+  text: string
+) {
+  config.systemPrompt += text;
+  (config.promptParts ??= []).push({ id, label, text });
+}
+
+type PreparedTurn = {
+  config: ReturnType<typeof resolveBotConfig>;
+  roomName: string;
+  isBotDM: boolean;
+  history: ChatMessage[];
+  lastUserMsg: string | null | undefined;
+  builtin: ReturnType<typeof getBuiltinTools>;
+  tools: OpenAITool[];
+  execute: (name: string, args: Record<string, unknown>) => Promise<string>;
+};
+
 /**
- * Runs one bot's turn. Yields delta events, returns final text.
+ * Assembles everything a bot turn needs: the full system prompt (as named
+ * sections), room context messages, and the merged tool set. Shared by
+ * runBot and the prompt-preview API. `preview: true` skips side effects
+ * (context compaction writes) and tool/room writes.
  */
-async function* runBot(
+export async function prepareBotTurn(
   bot: Bot,
   roomId: number,
   userId: number,
-  allowSilent = true,
   hiddenInstruction?: string,
-  collabDepth = 0
-): AsyncGenerator<RoomEvent, string> {
+  collabDepth = 0,
+  opts?: { preview?: boolean }
+): Promise<PreparedTurn> {
   const config = resolveBotConfig(bot);
 
   // Tell the bot exactly who shares this room, so it never wrongly
@@ -165,7 +195,12 @@ async function* runBot(
         `${m.kind === "user" ? " (human)" : ""}`
     )
     .join(", ");
-  config.systemPrompt += `\n\nYou are in room "${roomInfo?.name ?? roomId}". Members present: ${roster}.`;
+  addPart(
+    config,
+    "room",
+    "Room & members",
+    `\n\nYou are in room "${roomInfo?.name ?? roomId}". Members present: ${roster}.`
+  );
 
   // Colleague directory + reachability map: for each colleague, which
   // shared rooms can reach them. A colleague with no shared room is ONLY
@@ -199,7 +234,10 @@ async function* runBot(
       })
       .join("; ");
 
-    config.systemPrompt +=
+    addPart(
+      config,
+      "colleagues",
+      "Colleagues & reachability",
       `\n\n## Reaching colleagues\n${directory}\n` +
       `Choose the channel by what you need:\n` +
       `- Need their ANSWER to finish YOUR task (data, file, analysis) → ` +
@@ -214,17 +252,22 @@ async function* runBot(
       `this turn — NEVER schedule it for later just because it involves ` +
       `another bot. Scheduling is only for work the user wants at a ` +
       `future time. Keep private queries out of group rooms; keep things ` +
-      `the user should see out of DMs.`;
+      `the user should see out of DMs.`
+    );
   }
 
   // Bot↔bot DM: the reply IS the work product handed to the colleague —
   // the usual ~4-line chat limit would truncate it, so completeness wins.
   if (isBotDM) {
-    config.systemPrompt +=
+    addPart(
+      config,
+      "dm",
+      "Private channel note",
       `\n\nThis is your private channel with a colleague. They contacted ` +
-      `you for help — give the FULL answer or work result they need ` +
-      `(data, files, analysis), not a 4-line summary. Be complete but ` +
-      `focused; skip small talk.`;
+        `you for help — give the FULL answer or work result they need ` +
+        `(data, files, analysis), not a 4-line summary. Be complete but ` +
+        `focused; skip small talk.`
+    );
   }
 
   // List the OTHER rooms this bot belongs to, with ids and members, so
@@ -256,18 +299,23 @@ async function* runBot(
         return `#${r.id} "${r.name ?? "chat"}" (members: ${ms})`;
       })
       .join("; ");
-    config.systemPrompt +=
+    addPart(
+      config,
+      "other_rooms",
+      "Other rooms",
       `\n\nOther rooms you belong to: ${desc}. ` +
-      `To delegate work to bots in one of those rooms, call ` +
-      `itask__send_room_message with that room's id and @mention the bots ` +
-      `you want to act.`;
+        `To delegate work to bots in one of those rooms, call ` +
+        `itask__send_room_message with that room's id and @mention the bots ` +
+        `you want to act.`
+    );
   }
 
   // Compact when the projected history exceeds the token budget,
   // then reload the context (summary + verbatim tail).
   if (
+    !opts?.preview &&
     estimateMessagesTokens(loadRoomContextMessages(roomId, bot.id)) >
-    COMPACT_TOKEN_THRESHOLD
+      COMPACT_TOKEN_THRESHOLD
   ) {
     await compactRoom(roomId, bot.id, config);
   }
@@ -282,27 +330,86 @@ async function* runBot(
   if (lastUserMsg) {
     const hits = searchChunks(bot.id, lastUserMsg, 5);
     if (hits.length) {
-      config.systemPrompt +=
+      addPart(
+        config,
+        "knowledge",
+        "Knowledge base",
         "\n\n## Knowledge base (relevant excerpts)\n" +
-        hits.map((h) => `---\n${h}`).join("\n");
+          hits.map((h) => `---\n${h}`).join("\n")
+      );
     }
+
+    // Topic notes relevant to this message + the last couple of days of
+    // the bot's work log — structured memory beyond flat core facts.
+    const notes = getBotTopicNotes(bot.id, lastUserMsg);
+    if (notes.length) {
+      addPart(
+        config,
+        "notes",
+        "Topic notes",
+        "\n\n## Topic notes\n" + notes.map((n) => `- ${n}`).join("\n")
+      );
+    }
+  }
+  const logs = getBotRecentLogs(bot.id);
+  if (logs.length) {
+    addPart(
+      config,
+      "log",
+      "Recent activity log",
+      "\n\n## Recent activity (your work log)\n" +
+        logs.map((l) => `- ${l}`).join("\n")
+    );
   }
 
   const builtin = getBuiltinTools(userId, bot.id, roomId, collabDepth);
-  const mcp = await getMcpTools(userId);
+  // Preview builds the prompt only — skip connecting to MCP servers.
+  const mcp = opts?.preview
+    ? { tools: [] as OpenAITool[], execute: async () => "" }
+    : await getMcpTools(userId);
   const tools: OpenAITool[] = [...builtin.tools, ...mcp.tools];
   const execute = (name: string, args: Record<string, unknown>) =>
     name.startsWith("itask__")
       ? builtin.execute(name, args)
       : mcp.execute(name, args);
 
-  config.systemPrompt +=
+  addPart(
+    config,
+    "tools",
+    "Tools",
     "\n\nYou have tools available: itask__* for managing your memory, skills, " +
-    "MCP servers, your own profile (itask__update_profile), your schedule, " +
-    "messaging other rooms, and creating files for the user " +
-    "(itask__create_file — csv/xlsx/html/md/txt; use it whenever the user " +
-    "wants a report, export or document), plus tools from your connected " +
-    "MCP servers.";
+      "MCP servers, your own profile (itask__update_profile), your schedule, " +
+      "messaging other rooms, and creating files for the user " +
+      "(itask__create_file — csv/xlsx/html/md/txt; use it whenever the user " +
+      "wants a report, export or document), plus tools from your connected " +
+      "MCP servers."
+  );
+
+  return {
+    config,
+    roomName: roomInfo?.name ?? `room ${roomId}`,
+    isBotDM,
+    history,
+    lastUserMsg,
+    builtin,
+    tools,
+    execute,
+  };
+}
+
+/**
+ * Runs one bot's turn. Yields delta events, returns final text.
+ */
+async function* runBot(
+  bot: Bot,
+  roomId: number,
+  userId: number,
+  allowSilent = true,
+  hiddenInstruction?: string,
+  collabDepth = 0
+): AsyncGenerator<RoomEvent, string> {
+  const { config, roomName, history, lastUserMsg, builtin, tools, execute } =
+    await prepareBotTurn(bot, roomId, userId, hiddenInstruction, collabDepth);
 
   let msgs: ChatMessage[] = [...history];
   // A hidden instruction (e.g. a scheduled task) is injected into the
@@ -491,6 +598,9 @@ async function* runBot(
   // Persist BEFORE streaming deltas so a client disconnect can never
   // lose a completed reply.
   const saved = saveBotMessage(roomId, bot, text);
+
+  // Daily work log — the bot's own "what I did" record (kind='log').
+  logBotActivity(bot.id, roomName, lastUserMsg ?? "", text);
 
   // Emit in slices for a streaming feel
   for (let i = 0; i < text.length; i += 24) {

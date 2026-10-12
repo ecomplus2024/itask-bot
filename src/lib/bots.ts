@@ -33,13 +33,94 @@ export function getRoomBots(roomId: number, userId: number): Bot[] {
     .all(roomId, userId) as Bot[];
 }
 
+export type MemoryKind = "core" | "note" | "log";
+
+export type MemoryRow = {
+  id: number;
+  kind: MemoryKind;
+  topic: string | null;
+  content: string;
+};
+
+// Core memories: durable facts the bot must always carry (preferences,
+// deadlines, decisions). Always injected into the prompt.
 export function getBotMemories(botId: number, limit = 50): string[] {
   const rows = db
     .prepare(
-      "SELECT content FROM bot_memories WHERE bot_id = ? ORDER BY id DESC LIMIT ?"
+      `SELECT content FROM bot_memories
+       WHERE bot_id = ? AND kind = 'core' ORDER BY id DESC LIMIT ?`
     )
     .all(botId, limit) as { content: string }[];
   return rows.map((r) => r.content);
+}
+
+// Topic notes: longer notes about a specific subject, retrieved by keyword
+// relevance to the current message — like OpenMausBot's topic notes.
+export function getBotTopicNotes(
+  botId: number,
+  query: string,
+  limit = 5
+): string[] {
+  const rows = db
+    .prepare(
+      `SELECT topic, content FROM bot_memories
+       WHERE bot_id = ? AND kind = 'note' ORDER BY id DESC LIMIT 200`
+    )
+    .all(botId) as { topic: string | null; content: string }[];
+  if (!rows.length || !query.trim()) return [];
+  const words = new Set(
+    query
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w.length >= 3)
+  );
+  const scored = rows
+    .map((r) => {
+      const hay = `${r.topic ?? ""} ${r.content}`.toLowerCase();
+      let s = 0;
+      for (const w of words) if (hay.includes(w)) s++;
+      return { r, s };
+    })
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s);
+  return scored
+    .slice(0, limit)
+    .map((x) => (x.r.topic ? `[${x.r.topic}] ` : "") + x.r.content);
+}
+
+// Daily activity log: only the last couple of days are injected — the rest
+// stays in the DB as history the bot can list/forget.
+export function getBotRecentLogs(botId: number, limit = 25): string[] {
+  const rows = db
+    .prepare(
+      `SELECT content FROM bot_memories
+       WHERE bot_id = ? AND kind = 'log'
+         AND created_at >= datetime('now', '-2 days')
+       ORDER BY id DESC LIMIT ?`
+    )
+    .all(botId, limit) as { content: string }[];
+  return rows.map((r) => r.content).reverse();
+}
+
+// Appends one line to the bot's daily work log after each reply — the
+// "what did I do today" record. Old log lines are pruned after 30 days.
+export function logBotActivity(
+  botId: number,
+  roomName: string,
+  trigger: string,
+  reply: string
+) {
+  const ts = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" });
+  const line =
+    `[${ts}] ${roomName}: "${trigger.replace(/\s+/g, " ").slice(0, 120)}"` +
+    ` → "${reply.replace(/\s+/g, " ").slice(0, 160)}"`;
+  db.prepare(
+    "INSERT INTO bot_memories (bot_id, kind, content) VALUES (?, 'log', ?)"
+  ).run(botId, line);
+  db.prepare(
+    `DELETE FROM bot_memories
+     WHERE bot_id = ? AND kind = 'log' AND created_at < datetime('now', '-30 days')`
+  ).run(botId);
 }
 
 export function getBotSkillsPrompt(botId: number, userId: number): string {
@@ -133,19 +214,31 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `To change or remove an existing schedule, call itask__list_tasks to get ` +
     `the id, then itask__update_task / itask__cancel_task.`;
 
+  // Prompt is assembled as named sections (like OpenMausBot) so the user can
+  // inspect exactly what the model sees, per section.
+  const promptParts: { id: string; label: string; text: string }[] = [
+    { id: "identity", label: "Identity & operating rules", text: identity },
+  ];
+  const skills = getBotSkillsPrompt(bot.id, bot.user_id);
+  if (skills) promptParts.push({ id: "skills", label: "Skills", text: skills });
+
   const memories = getBotMemories(bot.id);
-  let systemPrompt = identity + getBotSkillsPrompt(bot.id, bot.user_id);
   if (memories.length) {
-    systemPrompt +=
-      "\n\n## Memory (things you have learned so far)\n" +
-      memories.map((m) => `- ${m}`).join("\n");
+    promptParts.push({
+      id: "memory",
+      label: "Core memory",
+      text:
+        "\n\n## Memory (things you have learned so far)\n" +
+        memories.map((m) => `- ${m}`).join("\n"),
+    });
   }
 
   return {
     baseUrl: (bot.ai_base_url || base.baseUrl).replace(/\/$/, ""),
     apiKey: bot.ai_api_key || base.apiKey,
     model: bot.ai_model || base.model,
-    systemPrompt,
+    systemPrompt: promptParts.map((p) => p.text).join(""),
+    promptParts,
   };
 }
 

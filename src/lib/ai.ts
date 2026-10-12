@@ -3,6 +3,8 @@ export type AIConfig = {
   apiKey: string;
   model: string;
   systemPrompt: string;
+  /** Named prompt sections — same bytes as systemPrompt, for inspection. */
+  promptParts?: { id: string; label: string; text: string }[];
 };
 
 export function envAIConfig(): AIConfig {
