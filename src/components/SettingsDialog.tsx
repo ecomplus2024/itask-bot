@@ -12,6 +12,7 @@ type FormState = {
   aiSystemPrompt: string;
   deepgramApiKey: string;
   geminiApiKey: string;
+  jevApiKey: string;
 };
 
 const SECTIONS = ["aiConfig", "skills", "mcp", "update"] as const;
@@ -42,6 +43,7 @@ export default function SettingsDialog({
     aiSystemPrompt: "",
     deepgramApiKey: "",
     geminiApiKey: "",
+    jevApiKey: "",
   });
   const [defaults, setDefaults] = useState<{
     aiBaseUrl: string;
@@ -50,6 +52,7 @@ export default function SettingsDialog({
     hasEnvKey: boolean;
     hasDgKey?: boolean;
     hasGeminiKey?: boolean;
+    hasJevKey?: boolean;
   } | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [version, setVersion] = useState("");
@@ -90,6 +93,7 @@ export default function SettingsDialog({
           aiSystemPrompt: data.settings.aiSystemPrompt,
           deepgramApiKey: data.settings.deepgramApiKey ?? "",
           geminiApiKey: data.settings.geminiApiKey ?? "",
+          jevApiKey: data.settings.jevApiKey ?? "",
         });
       });
   }, [open]);
@@ -307,6 +311,22 @@ export default function SettingsDialog({
               />
               <p className="mt-1 text-xs text-zinc-500">
                 {t("geminiHint")}
+              </p>
+            </div>
+
+            <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
+              <label className="block text-sm font-medium mb-1">
+                {t("jevKey")}
+              </label>
+              <input
+                type="password"
+                className={inputCls}
+                value={form.jevApiKey}
+                placeholder={defaults?.hasJevKey ? "••••••••" : "Key from console.typesafe.ai"}
+                onChange={(e) => set("jevApiKey")(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-zinc-500">
+                {t("jevHint")}
               </p>
             </div>
             </div>

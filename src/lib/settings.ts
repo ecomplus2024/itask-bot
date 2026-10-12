@@ -8,12 +8,13 @@ export type UserSettings = {
   aiSystemPrompt: string | null;
   deepgramApiKey: string | null;
   geminiApiKey: string | null;
+  jevApiKey: string | null;
 };
 
 export function getUserSettings(userId: number): UserSettings {
   const row = db
     .prepare(
-      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key
+      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key, jev_api_key
        FROM user_settings WHERE user_id = ?`
     )
     .get(userId) as
@@ -24,6 +25,7 @@ export function getUserSettings(userId: number): UserSettings {
         ai_system_prompt: string | null;
         deepgram_api_key: string | null;
         gemini_api_key: string | null;
+        jev_api_key: string | null;
       }
     | undefined;
   return {
@@ -33,21 +35,23 @@ export function getUserSettings(userId: number): UserSettings {
     aiSystemPrompt: row?.ai_system_prompt ?? null,
     deepgramApiKey: row?.deepgram_api_key ?? null,
     geminiApiKey: row?.gemini_api_key ?? null,
+    jevApiKey: row?.jev_api_key ?? null,
   };
 }
 
 export function saveUserSettings(userId: number, s: UserSettings) {
   db.prepare(
-    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key, jev_api_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        ai_base_url = excluded.ai_base_url,
        ai_api_key = excluded.ai_api_key,
        ai_model = excluded.ai_model,
        ai_system_prompt = excluded.ai_system_prompt,
        deepgram_api_key = excluded.deepgram_api_key,
-       gemini_api_key = excluded.gemini_api_key`
-  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt, s.deepgramApiKey, s.geminiApiKey);
+       gemini_api_key = excluded.gemini_api_key,
+       jev_api_key = excluded.jev_api_key`
+  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt, s.deepgramApiKey, s.geminiApiKey, s.jevApiKey);
 }
 
 /** Deepgram key for voice chat: user setting wins, env fallback. */

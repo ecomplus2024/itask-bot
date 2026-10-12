@@ -23,6 +23,7 @@ export async function GET() {
       aiSystemPrompt: s.aiSystemPrompt ?? "",
       deepgramApiKey: mask(s.deepgramApiKey),
       geminiApiKey: mask(s.geminiApiKey),
+      jevApiKey: mask(s.jevApiKey),
     },
     defaults: {
       aiBaseUrl: env.baseUrl,
@@ -34,6 +35,11 @@ export async function GET() {
         s.geminiApiKey ||
         process.env.GEMINI_API_KEY ||
         process.env.GOOGLE_API_KEY
+      ),
+      hasJevKey: !!(
+        s.jevApiKey ||
+        process.env.JEV_API_KEY ||
+        process.env.TYPESAFE_API_KEY
       ),
     },
   });
@@ -53,6 +59,8 @@ export async function PUT(req: NextRequest) {
   if (!dgKey || dgKey.includes("•")) dgKey = current.deepgramApiKey;
   let gmKey = body.geminiApiKey ?? null;
   if (!gmKey || gmKey.includes("•")) gmKey = current.geminiApiKey;
+  let jevKey = body.jevApiKey ?? null;
+  if (!jevKey || jevKey.includes("•")) jevKey = current.jevApiKey;
 
   saveUserSettings(user.id, {
     aiBaseUrl: body.aiBaseUrl?.trim() || null,
@@ -61,6 +69,7 @@ export async function PUT(req: NextRequest) {
     aiSystemPrompt: body.aiSystemPrompt?.trim() || null,
     deepgramApiKey: dgKey?.trim() || null,
     geminiApiKey: gmKey?.trim() || null,
+    jevApiKey: jevKey?.trim() || null,
   });
   return NextResponse.json({ ok: true });
 }

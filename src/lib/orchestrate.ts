@@ -22,6 +22,7 @@ import {
   loadRoomContextMessages,
   pruneOldToolResults,
 } from "./context";
+import { jevEval, resolveJevKey } from "./jev";
 
 const MAX_BOT_TURNS = 6;
 const HISTORY_LIMIT = 40;
@@ -423,8 +424,14 @@ async function* runBot(
   // (queries, tools, contacting colleagues), post a natural one-line ack
   // first — like a real colleague saying "em kiểm tra ngay ạ" — then do
   // the actual work. Skipped for scheduled/proactive runs and bot DMs.
+  // When Jev is configured it makes the needs-work decision (fast typed
+  // answer); without Jev, quickAck's own LLM call decides.
   if (!hiddenInstruction && !isBotDM && lastUserMsg) {
-    const ack = await quickAck(bot, config, lastUserMsg);
+    const needsWork = await jevNeedsWork(userId, lastUserMsg);
+    const ack =
+      needsWork === false
+        ? null
+        : await quickAck(bot, config, lastUserMsg, needsWork === true);
     if (ack) {
       const saved = saveBotMessage(roomId, bot, ack);
       yield { type: "message", message: saved };
@@ -683,10 +690,86 @@ const SILENT_RE = /^\s*\[{1,2}\s*SILENT\s*\]{1,2}/i;
  * bot can answer right away (greeting, simple question) and no ack is
  * needed. Never throws — a failed triage just means no ack message.
  */
+/**
+ * Jev fast path for the ack decision: "does this message need real work?"
+ * Returns true/false, or null when Jev isn't configured or failed —
+ * callers then fall back to quickAck's own LLM judgment.
+ */
+async function jevNeedsWork(
+  userId: number,
+  text: string
+): Promise<boolean | null> {
+  const answers = await jevEval(
+    userId,
+    `Chat message: "${text.slice(0, 2000)}"`,
+    {
+      needs_work: {
+        type: "noul",
+        instructions:
+          "Handling this message requires real work or processing time " +
+          "(data queries, tools, contacting people, research, analysis, " +
+          "creating files, multi-step answers) — it cannot be answered " +
+          "instantly like a greeting, thanks, or trivial small talk",
+      },
+    }
+  );
+  const v = answers?.needs_work?.noul;
+  return v == null ? null : v > 0.5;
+}
+
+/**
+ * Jev group routing: decides which bots a message concerns, given the
+ * last 10 room messages and every bot's role. Returns the relevant bots,
+ * or null when Jev isn't configured/failed — callers fall back to
+ * running everyone (bots self-decide with [[SILENT]]).
+ */
+async function jevRouteBots(
+  roomId: number,
+  userId: number,
+  roomBots: Bot[]
+): Promise<Bot[] | null> {
+  if (!resolveJevKey(userId)) return null;
+  const history = loadRoomMessages(roomId, 10);
+  const state =
+    "Group members and their roles:\n" +
+    roomBots
+      .map((b) => `- ${b.name}${b.role ? `: ${b.role}` : ""}`)
+      .join("\n") +
+    "\n\nRecent messages (latest last):\n" +
+    history
+      .map((m) => `[${m.sender_name}]: ${m.content.slice(0, 300)}`)
+      .join("\n");
+  const questions = Object.fromEntries(
+    roomBots.map((b) => [
+      `bot_${b.id}`,
+      {
+        type: "noul" as const,
+        instructions:
+          `The latest message concerns ${b.name} or needs ` +
+          `${b.name}'s expertise${b.role ? ` (${b.role})` : ""} — ` +
+          `they should respond or participate`,
+      },
+    ])
+  );
+  const answers = await jevEval(userId, state, questions);
+  if (!answers) return null;
+  const picked = roomBots.filter(
+    (b) => (answers[`bot_${b.id}`]?.noul ?? 0) > 0.5
+  );
+  console.log(
+    "[jev] room route:",
+    roomBots.map(
+      (b) => `${b.name}=${(answers[`bot_${b.id}`]?.noul ?? 0).toFixed(2)}`
+    ).join(", ")
+  );
+  return picked;
+}
+
 async function quickAck(
   bot: Bot,
   config: ReturnType<typeof resolveBotConfig>,
-  userText: string
+  userText: string,
+  force = false
 ): Promise<string | null> {
   try {
     const res = await chatOnce(
@@ -696,14 +779,20 @@ async function quickAck(
           content:
             `${bot.name} — a colleague just sent you this chat message:\n` +
             `"${userText.slice(0, 500)}"\n\n` +
-            `If handling it needs real work or time (data queries, tools, ` +
-            `contacting people, research, analysis, creating files) → reply ` +
-            `with ONE short natural acknowledgment in the same language the ` +
-            `message uses — like a human colleague ("Dạ em kiểm tra ngay ạ"). ` +
-            `Acknowledge only: no answers, no questions, no details.\n` +
-            `If you could answer it right away with no work at all ` +
-            `(greeting, thanks, trivial small talk) → reply with exactly ` +
-            `[[NOW]] and nothing else.`,
+            (force
+              ? `Handling it needs real work or time — reply with ONE ` +
+                `short natural acknowledgment in the same language the ` +
+                `message uses, like a human colleague ("Dạ em kiểm tra ` +
+                `ngay ạ"). Acknowledge only: no answers, no questions, ` +
+                `no details.`
+              : `If handling it needs real work or time (data queries, tools, ` +
+                `contacting people, research, analysis, creating files) → reply ` +
+                `with ONE short natural acknowledgment in the same language the ` +
+                `message uses — like a human colleague ("Dạ em kiểm tra ngay ạ"). ` +
+                `Acknowledge only: no answers, no questions, no details.\n` +
+                `If you could answer it right away with no work at all ` +
+                `(greeting, thanks, trivial small talk) → reply with exactly ` +
+                `[[NOW]] and nothing else.`),
         },
       ],
       { ...config, systemPrompt: "You write one-line chat acknowledgments." },
@@ -820,10 +909,19 @@ export async function* orchestrate(
   // Everyone in the room listens. Mentioned bots go first; the rest may
   // still chime in like real colleagues (or stay silent).
   const mentioned = resolveResponders(triggerContent, roomBots);
-  const queue: Bot[] = [
+  let queue: Bot[] = [
     ...mentioned,
     ...roomBots.filter((b) => !mentioned.some((m) => m.id === b.id)),
   ];
+  // Jev routing (group rooms, no explicit mentions): given the last 10
+  // messages and each bot's role, Jev decides which bots the message
+  // actually concerns — the rest don't even wake up, saving their turns.
+  // No key/failure → everyone listens as before. A "nobody" verdict is
+  // treated as unreliable and also falls back to everyone.
+  if (roomBots.length > 1 && mentioned.length === 0) {
+    const relevant = await jevRouteBots(roomId, userId, roomBots);
+    if (relevant?.length) queue = relevant;
+  }
   const responded = new Set<number>();
   let turns = 0;
 
