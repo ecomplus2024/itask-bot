@@ -1,4 +1,5 @@
 import db from "./db";
+import { jevEval, resolveJevKey } from "./jev";
 import { listTools, McpServer } from "./mcp";
 import type { OpenAITool } from "./mcp";
 import { assertValidCron, nextCronRunUtc } from "./cron";
@@ -481,6 +482,45 @@ export function getBuiltinTools(
           (m) => m.content.toLowerCase().replace(/\s+/g, " ") === norm
         );
         if (dup) return JSON.stringify({ ok: true, id: dup.id, deduped: true });
+        // Jev scope gate: prompt rules alone still let stray facts about
+        // colleagues' work leak into the wrong bot's memory — when Jev is
+        // configured, one fast noul vets relevance to THIS bot's role
+        // before persisting. Failures save as normal (never block memory).
+        if (resolveJevKey(userId)) {
+          const b = db
+            .prepare("SELECT name, role FROM bots WHERE id = ?")
+            .get(botId) as { name: string; role: string | null } | undefined;
+          const answers = await jevEval(
+            userId,
+            `${b?.name ?? "This bot"}${b?.role ? ` (${b.role})` : ""} is ` +
+              `about to store this in its long-term memory:\n` +
+              `"${content.slice(0, 1000)}"`,
+            {
+              in_scope: {
+                type: "noul",
+                instructions:
+                  `This fact concerns ${b?.name ?? "the bot"}'s own role ` +
+                  `and work${b?.role ? ` (${b.role})` : ""} — it is not a ` +
+                  `colleague's job or unrelated information overheard in a ` +
+                  `group`,
+              },
+            }
+          );
+          const v = answers?.in_scope?.noul;
+          if (v != null && v <= 0.5) {
+            console.log(
+              `[jev] ${b?.name}: rejected out-of-scope memory ` +
+                `(${v.toFixed(2)}): "${content.slice(0, 60)}"`
+            );
+            return JSON.stringify({
+              ok: false,
+              skipped: "out_of_scope",
+              message:
+                "Not stored: this does not concern YOUR role — leave it " +
+                "for the colleague it belongs to.",
+            });
+          }
+        }
         const r = db
           .prepare(
             "INSERT INTO bot_memories (bot_id, kind, topic, content) VALUES (?, ?, ?, ?)"

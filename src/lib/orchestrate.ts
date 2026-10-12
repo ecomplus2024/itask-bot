@@ -22,7 +22,7 @@ import {
   loadRoomContextMessages,
   pruneOldToolResults,
 } from "./context";
-import { jevEval, resolveJevKey } from "./jev";
+import { jevEval, resolveJevKey, JevQuestion } from "./jev";
 
 const MAX_BOT_TURNS = 6;
 const HISTORY_LIMIT = 40;
@@ -531,7 +531,8 @@ async function* runBot(
           triggerText,
           answer,
           calledTools,
-          config
+          config,
+          userId
         );
         if (!missing.length) break;
         console.log(`[runBot] ${bot.name} missing actions:`, missing);
@@ -815,7 +816,8 @@ async function verifyActions(
   triggerText: string,
   reply: string,
   calledTools: Set<string>,
-  config: Parameters<typeof chatOnce>[1]
+  config: Parameters<typeof chatOnce>[1],
+  userId: number
 ): Promise<string[]> {
   const schedTools = [
     "itask__schedule_task",
@@ -831,69 +833,122 @@ async function verifyActions(
   // Nothing to verify when all concerns are already satisfied.
   if (scheduleCalled && rememberCalled && delegateCalled) return [];
 
-  try {
-    const res = await chatOnce(
-      [
-        {
-          role: "user",
-          content:
-            `You verify whether an assistant actually performed required ` +
-            `actions or only claimed them in words.\n\n` +
-            `USER REQUEST: ${triggerText || "(scheduled run / unknown)"}\n\n` +
-            `ASSISTANT REPLY: ${reply}\n\n` +
-            `TOOLS ACTUALLY CALLED: ${[...calledTools].join(", ") || "none"}\n\n` +
-            `Rules:\n` +
-            `- If the user asked for work to happen LATER, at a specific ` +
-            `future time, or PERIODICALLY (e.g. "in N minutes", "tomorrow", ` +
-            `"every morning", "remind me", "báo cáo lại sau"), a scheduling ` +
-            `tool MUST have been called. The job belongs to the future run, ` +
-            `not to the reply. Note: a reply that merely confirms a schedule ` +
-            `it just created is fine.\n` +
-            `- If the assistant claims it noted/saved/remembered/will ` +
-            `remember something, itask__remember MUST have been called.\n` +
-            `- If the assistant says it asked/contacted/relayed to another ` +
-            `bot, delegated work, or promises to report a colleague's ` +
-            `answer, a contact tool (itask__ask_bot or ` +
-            `itask__send_room_message) MUST have been called. An @mention ` +
-            `inside the reply text does NOT count — only the tools reach ` +
-            `the colleague.\n` +
-            `- If the user only shared information and the assistant merely ` +
-            `acknowledged receipt (no claim to store or to contact anyone), ` +
-            `no tool is required.\n` +
-            `Reply with a JSON object only, e.g. ` +
-            `{"missing": []} or {"missing": ["schedule", "remember", "delegate"]}.`,
-        },
-      ],
-      { ...config, systemPrompt: "You are a strict JSON verifier." },
-      []
-    );
-    const text = res.content ?? "";
-    const json = JSON.parse(
-      text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1) || "{}"
-    ) as { missing?: string[] };
-    const missing: string[] = [];
-    if (
-      json.missing?.includes("schedule") &&
-      !scheduleCalled
-    ) {
-      missing.push(
-        "a scheduling tool (itask__schedule_task / itask__update_task / itask__cancel_task — call itask__list_tasks first if you need the task id) — the user asked for work to happen LATER or PERIODICALLY, but nothing was scheduled. Schedule the WHOLE job for that future time and reply with ONLY a brief confirmation — do NOT include the result/data itself."
+  const state =
+    `USER REQUEST: ${triggerText || "(scheduled run / unknown)"}\n\n` +
+    `ASSISTANT REPLY: ${reply}\n\n` +
+    `TOOLS ACTUALLY CALLED: ${[...calledTools].join(", ") || "none"}`;
+
+  type Flag = "schedule" | "remember" | "delegate";
+  let flags: Set<Flag> | null = null;
+
+  // Jev fast path: three typed noul questions in ONE call replace the
+  // JSON-generating LLM verifier — typed answers, no parsing, much faster.
+  // Any failure falls through to the LLM path below.
+  if (resolveJevKey(userId)) {
+    const questions: Record<string, JevQuestion> = {};
+    if (!scheduleCalled)
+      questions.schedule = {
+        type: "noul",
+        instructions:
+          "The user asked for work to happen LATER, at a specific future " +
+          "time, or PERIODICALLY (e.g. 'in N minutes', 'tomorrow', 'every " +
+          "morning', 'remind me', 'báo cáo lại sau'), and no scheduling " +
+          "tool was called — the job belongs to a future scheduled run, " +
+          "not to the reply",
+      };
+    if (!rememberCalled)
+      questions.remember = {
+        type: "noul",
+        instructions:
+          "The assistant's reply claims it noted/saved/remembered or will " +
+          "remember something, but no memory tool was called",
+      };
+    if (!delegateCalled)
+      questions.delegate = {
+        type: "noul",
+        instructions:
+          "The assistant's reply says it asked/contacted/relayed to " +
+          "another bot, delegated work, or promises to report a " +
+          "colleague's answer, but no colleague-contact tool was called " +
+          "(a written @mention in the reply does not count)",
+      };
+    const answers = await jevEval(userId, state, questions);
+    if (answers) {
+      flags = new Set(
+        (Object.keys(questions) as Flag[]).filter(
+          (k) => (answers[k]?.noul ?? 0) > 0.5
+        )
       );
+      if (flags.size)
+        console.log("[jev] verifyActions missing:", [...flags].join(", "));
     }
-    if (json.missing?.includes("remember") && !rememberCalled) {
-      missing.push(
-        "itask__remember — you said you noted/remembered something but nothing was stored"
-      );
-    }
-    if (json.missing?.includes("delegate") && !delegateCalled) {
-      missing.push(
-        "a colleague-contact tool — you said you would ask/notify another bot but never reached them. Use itask__ask_bot for a private question whose answer you need, or itask__send_room_message to delegate into a shared room (writing @Name in your reply does NOT contact them)."
-      );
-    }
-    return missing;
-  } catch {
-    return [];
   }
+
+  if (!flags) {
+    flags = new Set();
+    try {
+      const res = await chatOnce(
+        [
+          {
+            role: "user",
+            content:
+              `You verify whether an assistant actually performed required ` +
+              `actions or only claimed them in words.\n\n` +
+              `${state}\n\n` +
+              `Rules:\n` +
+              `- If the user asked for work to happen LATER, at a specific ` +
+              `future time, or PERIODICALLY (e.g. "in N minutes", "tomorrow", ` +
+              `"every morning", "remind me", "báo cáo lại sau"), a scheduling ` +
+              `tool MUST have been called. The job belongs to the future run, ` +
+              `not to the reply. Note: a reply that merely confirms a schedule ` +
+              `it just created is fine.\n` +
+              `- If the assistant claims it noted/saved/remembered/will ` +
+              `remember something, itask__remember MUST have been called.\n` +
+              `- If the assistant says it asked/contacted/relayed to another ` +
+              `bot, delegated work, or promises to report a colleague's ` +
+              `answer, a contact tool (itask__ask_bot or ` +
+              `itask__send_room_message) MUST have been called. An @mention ` +
+              `inside the reply text does NOT count — only the tools reach ` +
+              `the colleague.\n` +
+              `- If the user only shared information and the assistant merely ` +
+              `acknowledged receipt (no claim to store or to contact anyone), ` +
+              `no tool is required.\n` +
+              `Reply with a JSON object only, e.g. ` +
+              `{"missing": []} or {"missing": ["schedule", "remember", "delegate"]}.`,
+          },
+        ],
+        { ...config, systemPrompt: "You are a strict JSON verifier." },
+        []
+      );
+      const text = res.content ?? "";
+      const json = JSON.parse(
+        text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1) || "{}"
+      ) as { missing?: string[] };
+      for (const m of json.missing ?? [])
+        if (m === "schedule" || m === "remember" || m === "delegate")
+          flags.add(m);
+    } catch {
+      return [];
+    }
+  }
+
+  const missing: string[] = [];
+  if (flags.has("schedule") && !scheduleCalled) {
+    missing.push(
+      "a scheduling tool (itask__schedule_task / itask__update_task / itask__cancel_task — call itask__list_tasks first if you need the task id) — the user asked for work to happen LATER or PERIODICALLY, but nothing was scheduled. Schedule the WHOLE job for that future time and reply with ONLY a brief confirmation — do NOT include the result/data itself."
+    );
+  }
+  if (flags.has("remember") && !rememberCalled) {
+    missing.push(
+      "itask__remember — you said you noted/remembered something but nothing was stored"
+    );
+  }
+  if (flags.has("delegate") && !delegateCalled) {
+    missing.push(
+      "a colleague-contact tool — you said you would ask/notify another bot but never reached them. Use itask__ask_bot for a private question whose answer you need, or itask__send_room_message to delegate into a shared room (writing @Name in your reply does NOT contact them)."
+    );
+  }
+  return missing;
 }
 
 // Bots evaluate a message concurrently like real colleagues — everyone
