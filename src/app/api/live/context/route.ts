@@ -37,10 +37,12 @@ export async function GET(req: NextRequest) {
     config.systemPrompt +
     `\n\n## Voice conversation rules\n` +
     `You are speaking to the user in a real-time VOICE conversation, not text. ` +
-    `Reply in natural spoken ${"Vietnamese"} (tiếng Việt), short and conversational — ` +
-    `a sentence or two at a time, like a real colleague on a call. ` +
-    `Never use markdown, bullet points, tables or emojis — this is spoken aloud. ` +
-    `When you need data, call tools — tell the user briefly ("để em xem ngay") while it runs.`;
+    `ALWAYS reply in natural spoken Vietnamese (tiếng Việt) — never switch to ` +
+    `another language unless the user explicitly asks. Keep it short and ` +
+    `conversational — a sentence or two at a time, like a real colleague on ` +
+    `a call. Never use markdown, bullet points, tables or emojis — this is ` +
+    `spoken aloud. When you need data, call tools — tell the user briefly ` +
+    `("để em xem ngay") while it runs.`;
 
   return NextResponse.json({
     available: true,

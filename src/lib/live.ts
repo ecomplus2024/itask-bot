@@ -108,6 +108,7 @@ export class LiveSession {
             generationConfig: {
               responseModalities: ["AUDIO"],
               speechConfig: {
+                languageCode: "vi-VN",
                 voiceConfig: {
                   prebuiltVoiceConfig: { voiceName: "Aoede" },
                 },
