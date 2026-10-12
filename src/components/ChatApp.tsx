@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/lib/i18n";
-import { ChevronLeft, Minus, Square, X } from "lucide-react";
+import { ChevronLeft, Minus, Plus, Search, Square, X } from "lucide-react";
 import Composer from "./Composer";
 import RoomMessageList, { RoomMsg } from "./RoomMessageList";
 import BotAvatar from "./BotAvatar";
@@ -27,6 +27,12 @@ type Room = {
   kind?: string;
   updated_at: string;
   bots: Bot[];
+  last_message?: {
+    kind: string;
+    sender_name: string;
+    content: string;
+    created_at: string;
+  } | null;
 };
 
 export default function ChatApp({
@@ -51,6 +57,9 @@ export default function ChatApp({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dark, setDark] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [plusOpen, setPlusOpen] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("off");
   const [voiceInterim, setVoiceInterim] = useState("");
   const [voiceError, setVoiceError] = useState("");
@@ -502,6 +511,58 @@ export default function ChatApp({
     return null;
   }
 
+  function lastMessagePreview(r?: Room | null, direct = false) {
+    const m = r?.last_message;
+    if (!m) return "";
+    const text = m.content.replace(/\s+/g, " ").trim();
+    if (m.kind === "user") return `${t("you")}: ${text}`;
+    return direct ? text : `${m.sender_name}: ${text}`;
+  }
+
+  // Chat-app style timestamp for the mobile conversation list.
+  function fmtListTime(iso?: string | null) {
+    if (!iso) return "";
+    const d = new Date(iso.replace(" ", "T") + "Z");
+    if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const loc = lang === "vi" ? "vi-VN" : "en-US";
+    if (d.toDateString() === now.toDateString())
+      return d.toLocaleTimeString(loc, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return t("yesterday");
+    if (now.getTime() - d.getTime() < 6 * 86400000)
+      return d.toLocaleDateString(loc, { weekday: "long" });
+    return d.toLocaleDateString(loc, { day: "2-digit", month: "2-digit" });
+  }
+
+  // Mobile home: one flat conversation list — every bot (its direct room)
+  // plus every group/bot↔bot room, sorted by latest activity.
+  const q = searchQuery.trim().toLowerCase();
+  const mobileItems = [
+    ...bots.map((bot) => ({
+      key: `b${bot.id}`,
+      bot,
+      room: rooms.find((r) => r.direct_bot_id === bot.id),
+    })),
+    ...rooms
+      .filter((r) => !r.direct_bot_id)
+      .map((room) => ({ key: `r${room.id}`, bot: undefined, room })),
+  ]
+    .filter(
+      (it) =>
+        !q || (it.bot?.name ?? it.room?.name ?? "").toLowerCase().includes(q)
+    )
+    .sort((a, b) => {
+      const ta = a.room?.last_message?.created_at ?? a.room?.updated_at ?? "";
+      const tb = b.room?.last_message?.created_at ?? b.room?.updated_at ?? "";
+      return tb.localeCompare(ta);
+    });
+
   return (
     <div className="flex h-screen overflow-hidden wco-inset">
       <div className="titlebar-drag">
@@ -534,8 +595,166 @@ export default function ChatApp({
       <aside
         className={`${
           activeRoom ? "hidden md:flex" : "flex"
-        } w-full md:w-64 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50`}
+        } relative w-full md:w-64 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800 bg-white md:bg-zinc-50 dark:bg-zinc-950 md:dark:bg-zinc-900/50`}
       >
+          {/* Mobile header: avatar + search + new */}
+          <div className="md:hidden flex items-center justify-between px-4 pt-3 pb-1">
+            <button
+              onClick={() => setUserMenuOpen((o) => !o)}
+              className="w-11 h-11 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-base font-semibold"
+            >
+              {user.name.charAt(0).toUpperCase()}
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setSearchOpen((o) => !o);
+                  if (searchOpen) setSearchQuery("");
+                }}
+                className="w-11 h-11 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-600 dark:text-zinc-300"
+                aria-label={t("search")}
+              >
+                <Search size={20} />
+              </button>
+              <button
+                onClick={() => setPlusOpen((o) => !o)}
+                className="w-11 h-11 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-600 dark:text-zinc-300"
+                aria-label={t("newChat")}
+              >
+                <Plus size={22} />
+              </button>
+            </div>
+          </div>
+          {plusOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setPlusOpen(false)}
+              />
+              <div className="md:hidden absolute right-3 top-16 z-50 w-44 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden py-1">
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    setBotDialog("new");
+                  }}
+                  className="w-full px-4 py-2.5 text-sm text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  {t("addBot")}
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    openNewRoom();
+                  }}
+                  className="w-full px-4 py-2.5 text-sm text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  {t("newRoom")}
+                </button>
+              </div>
+            </>
+          )}
+          {searchOpen && (
+            <div className="md:hidden px-4 pb-2">
+              <input
+                autoFocus
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t("search")}
+                className="w-full rounded-full bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm outline-none"
+              />
+            </div>
+          )}
+
+          {/* Mobile conversation list (flat, chat-app style) */}
+          <div className="md:hidden flex-1 min-h-0 overflow-y-auto pb-4">
+            {mobileItems.length === 0 && (
+              <p className="px-4 py-10 text-center text-sm text-zinc-400">
+                {bots.length === 0 ? t("noBots") : t("noRooms")}
+              </p>
+            )}
+            {mobileItems.map((it) => {
+              const isBot = !!it.bot;
+              const r = it.room;
+              const name = it.bot?.name ?? r?.name ?? "";
+              const preview = r
+                ? lastMessagePreview(r, !!r.direct_bot_id)
+                : "";
+              const fallback = isBot
+                ? it.bot?.role ?? ""
+                : r?.bots.map((b) => b.name).join(", ") ?? "";
+              const busy = isBot
+                ? !!it.bot?.thinking
+                : r?.bots.some((rb) =>
+                      bots.find((b) => b.id === rb.id)?.thinking
+                    ) ?? false;
+              return (
+                <div
+                  key={it.key}
+                  onClick={() => {
+                    if (it.bot) openDirectChat(it.bot);
+                    else if (r) openRoom(r);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (it.bot) openBotDialog(it.bot);
+                    else if (r && r.kind !== "bot_dm") openEditRoom(r);
+                  }}
+                  className="flex items-center gap-3 px-4 py-2.5 cursor-pointer active:bg-zinc-100 dark:active:bg-zinc-900"
+                >
+                  <div className="relative shrink-0">
+                    {it.bot ? (
+                      <BotAvatar
+                        avatar={it.bot.avatar}
+                        botId={it.bot.id}
+                        size={56}
+                      />
+                    ) : r && r.bots.length > 0 ? (
+                      <BotAvatar
+                        avatar={r.bots[0].avatar}
+                        botId={r.bots[0].id}
+                        size={56}
+                      />
+                    ) : (
+                      <span className="w-14 h-14 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-zinc-400 text-2xl font-bold">
+                        #
+                      </span>
+                    )}
+                    {!isBot && r && r.bots.length > 0 && (
+                      <span className="absolute -bottom-0.5 -left-0.5 w-6 h-6 rounded-full bg-zinc-200 dark:bg-zinc-600 text-zinc-500 dark:text-zinc-200 flex items-center justify-center text-xs font-bold ring-2 ring-white dark:ring-zinc-950">
+                        #
+                      </span>
+                    )}
+                    {busy && (
+                      <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="min-w-0 truncate text-base font-semibold">
+                        {name}
+                      </p>
+                      {isBot && it.bot?.role && (
+                        <span className="shrink-0 max-w-[38%] truncate rounded-md bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-[11px] leading-tight text-zinc-500">
+                          {it.bot.role}
+                        </span>
+                      )}
+                      <span className="ml-auto shrink-0 text-xs text-zinc-400">
+                        {fmtListTime(
+                          r?.last_message?.created_at ?? r?.updated_at
+                        )}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[13px] text-zinc-500">
+                      {preview || fallback || "\u00A0"}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Desktop sidebar sections */}
+          <div className="hidden md:flex md:flex-col flex-1 min-h-0">
           {/* Bots */}
           <div className="p-3 pb-1 flex items-center justify-between">
             <p className="text-xs font-semibold uppercase text-zinc-500">
@@ -553,7 +772,12 @@ export default function ChatApp({
             {bots.length === 0 && (
               <p className="px-1 py-2 text-xs text-zinc-500">{t("noBots")}</p>
             )}
-            {bots.map((b) => (
+            {bots.map((b) => {
+              const preview = lastMessagePreview(
+                rooms.find((r) => r.direct_bot_id === b.id),
+                true
+              );
+              return (
               <div
                 key={b.id}
                 onClick={() => openDirectChat(b)}
@@ -576,8 +800,10 @@ export default function ChatApp({
                       </span>
                     )}
                   </p>
-                  {b.role && (
-                    <p className="text-xs text-zinc-500 truncate">{b.role}</p>
+                  {(preview || b.role) && (
+                    <p className="text-xs text-zinc-500 truncate">
+                      {preview || b.role}
+                    </p>
                   )}
                 </div>
                 <button
@@ -591,7 +817,8 @@ export default function ChatApp({
                   ✎
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Rooms */}
@@ -618,6 +845,7 @@ export default function ChatApp({
               const roomBusy = r.bots.some((rb) =>
                 bots.find((b) => b.id === rb.id)?.thinking
               );
+              const preview = lastMessagePreview(r);
               return (
               <div
                 key={r.id}
@@ -640,7 +868,7 @@ export default function ChatApp({
                     )}
                   </p>
                   <p className="text-xs text-zinc-500 truncate">
-                    {r.bots.map((b) => b.name).join(", ")}
+                    {preview || r.bots.map((b) => b.name).join(", ")}
                   </p>
                 </div>
                 <button
@@ -679,6 +907,7 @@ export default function ChatApp({
                     const roomBusy = r.bots.some((rb) =>
                       bots.find((b) => b.id === rb.id)?.thinking
                     );
+                    const preview = lastMessagePreview(r);
                     return (
                       <div
                         key={r.id}
@@ -700,6 +929,11 @@ export default function ChatApp({
                               </span>
                             )}
                           </p>
+                          {preview && (
+                            <p className="text-xs text-zinc-500 truncate">
+                              {preview}
+                            </p>
+                          )}
                         </div>
                         <button
                           title={t("delete")}
@@ -717,15 +951,16 @@ export default function ChatApp({
               </>
             )}
           </div>
+          </div>
 
-          <div className="relative border-t border-zinc-200 dark:border-zinc-800 p-3">
+          <div className="md:relative md:border-t md:border-zinc-200 md:dark:border-zinc-800 md:p-3">
             {userMenuOpen && (
               <>
                 <div
                   className="fixed inset-0 z-40"
                   onClick={() => setUserMenuOpen(false)}
                 />
-                <div className="absolute bottom-full left-3 right-3 mb-2 z-50 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden py-1">
+                <div className="fixed md:absolute top-16 md:top-auto left-3 right-3 md:bottom-full mb-0 md:mb-2 z-50 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden py-1">
                   <button
                     onClick={() => {
                       setUserMenuOpen(false);
@@ -777,7 +1012,7 @@ export default function ChatApp({
             )}
             <button
               onClick={() => setUserMenuOpen((o) => !o)}
-              className="w-full flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left"
+              className="hidden md:flex w-full items-center gap-2 rounded-lg px-1 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left"
             >
               <div className="w-8 h-8 rounded-full bg-zinc-300 dark:bg-zinc-700 flex items-center justify-center text-sm font-semibold shrink-0">
                 {user.name.charAt(0).toUpperCase()}

@@ -140,6 +140,9 @@ const dict = {
     docName: "Tên tài liệu",
     noDocs: "Chưa có tài liệu nào",
     chunks: "đoạn",
+    you: "Bạn",
+    yesterday: "Hôm qua",
+    search: "Tìm kiếm",
   },
   en: {
     appName: "iTask Bot",
@@ -270,6 +273,9 @@ const dict = {
     docName: "Document name",
     noDocs: "No documents yet",
     chunks: "chunks",
+    you: "You",
+    yesterday: "Yesterday",
+    search: "Search",
   },
 } as const;
 

@@ -55,7 +55,6 @@ const TABS = [
   "knowledge",
   "skills",
   "mcp",
-  "memories",
   "tasks",
   "prompt",
 ] as const;
@@ -144,20 +143,6 @@ export default function BotDialog({
     }
     setSaving(false);
     onSaved();
-  }
-
-  async function clearMemories() {
-    if (!botId) return;
-    await fetch(`/api/bots/${botId}/memories`, { method: "DELETE" });
-    setMemories([]);
-  }
-
-  async function deleteMemory(memId: number) {
-    if (!botId) return;
-    await fetch(`/api/bots/${botId}/memories?id=${memId}`, {
-      method: "DELETE",
-    });
-    setMemories((m) => m.filter((x) => x.id !== memId));
   }
 
   async function cancelTask(taskId: number) {
@@ -399,83 +384,6 @@ export default function BotDialog({
               </>
             )}
 
-            {tab === "memories" && (
-              <div className="space-y-2">
-                {memories.length === 0 && (
-                  <p className="text-sm text-zinc-500 py-4 text-center">
-                    {t("noMemories")}
-                  </p>
-                )}
-                {memories
-                  .filter((m) => m.kind !== "log")
-                  .map((m) => (
-                  <div
-                    key={m.id}
-                    className="flex items-start gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2"
-                  >
-                    <span
-                      className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                        m.kind === "note"
-                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                          : m.kind === "log"
-                            ? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                            : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                      }`}
-                    >
-                      {m.kind === "note"
-                        ? m.topic || t("memNote")
-                        : m.kind === "log"
-                          ? t("memLog")
-                          : t("memCore")}
-                    </span>
-                    <p className="flex-1 text-sm break-words">{m.content}</p>
-                    <button
-                      onClick={() => deleteMemory(m.id)}
-                      className="text-xs text-zinc-400 hover:text-red-500"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-                {memories.some((m) => m.kind !== "log") && (
-                  <button
-                    onClick={clearMemories}
-                    className="text-xs text-red-500 hover:underline"
-                  >
-                    {t("clearAll")}
-                  </button>
-                )}
-                {memories.filter((m) => m.kind === "log").length > 0 && (
-                  <details className="pt-2">
-                    <summary className="cursor-pointer text-xs text-zinc-500">
-                      {t("memLog")} (
-                      {memories.filter((m) => m.kind === "log").length})
-                    </summary>
-                    <div className="space-y-1.5 mt-2">
-                      {memories
-                        .filter((m) => m.kind === "log")
-                        .map((m) => (
-                          <div
-                            key={m.id}
-                            className="flex items-start gap-2 rounded-lg border border-zinc-200/60 dark:border-zinc-800/60 px-3 py-1.5"
-                          >
-                            <p className="flex-1 text-xs text-zinc-500 break-words">
-                              {m.content}
-                            </p>
-                            <button
-                              onClick={() => deleteMemory(m.id)}
-                              className="text-xs text-zinc-400 hover:text-red-500"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                    </div>
-                  </details>
-                )}
-              </div>
-            )}
-
             {tab === "prompt" &&
               (botId ? (
                 <div className="space-y-2">
@@ -520,6 +428,43 @@ export default function BotDialog({
                     <p className="text-sm text-zinc-500 py-4 text-center">
                       {t("promptEmpty")}
                     </p>
+                  )}
+                  {/* Full memory inventory — including notes/logs NOT
+                      injected this turn. Edit/delete is done by asking
+                      the bot itself (itask__remember / itask__forget). */}
+                  {memories.length > 0 && (
+                    <details className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+                      <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                        {t("memories")} ({memories.length})
+                      </summary>
+                      <div className="px-3 pb-3 space-y-1.5">
+                        {memories.map((m) => (
+                          <div
+                            key={m.id}
+                            className="flex items-start gap-2 text-xs"
+                          >
+                            <span
+                              className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                m.kind === "note"
+                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                                  : m.kind === "log"
+                                    ? "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                                    : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                              }`}
+                            >
+                              {m.kind === "note"
+                                ? m.topic || t("memNote")
+                                : m.kind === "log"
+                                  ? t("memLog")
+                                  : t("memCore")}
+                            </span>
+                            <p className="flex-1 text-zinc-600 dark:text-zinc-400 break-words">
+                              {m.content}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
                   )}
                 </div>
               ) : (

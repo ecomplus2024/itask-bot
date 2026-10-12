@@ -16,9 +16,14 @@ export async function GET() {
      JOIN bots b ON b.id = rm.ref_id
      WHERE rm.room_id = ? AND rm.kind = 'bot'`
   );
+  const lastMsgStmt = db.prepare(
+    `SELECT kind, sender_name, content, created_at FROM room_messages
+     WHERE room_id = ? ORDER BY id DESC LIMIT 1`
+  );
   const result = (rooms as { id: number }[]).map((r) => ({
     ...r,
     bots: memberStmt.all(r.id),
+    last_message: lastMsgStmt.get(r.id) ?? null,
   }));
   return NextResponse.json({ rooms: result });
 }
