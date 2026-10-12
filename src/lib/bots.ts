@@ -113,10 +113,26 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `You are ${bot.name}${bot.role ? `, ${bot.role}` : ""}, a digital employee. ` +
       `Answer helpfully and concisely in the same language the user uses.`;
 
+  const now = new Date();
+  const fmtD = (d: Date) =>
+    d.toLocaleDateString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" });
+  const weekday = now.toLocaleDateString("vi-VN", {
+    weekday: "long",
+    timeZone: "Asia/Ho_Chi_Minh",
+  });
   const identity =
     persona +
-    `\n\nCurrent date/time: ${new Date().toLocaleString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" })} (Asia/Ho_Chi_Minh)` +
+    `\n\nCurrent date/time: ${now.toLocaleString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" })} (Asia/Ho_Chi_Minh)` +
+    `\nDate anchor: today = ${fmtD(now)} (${weekday}); ` +
+    `"hôm qua"/yesterday = ${fmtD(new Date(now.getTime() - 86400000))}; ` +
+    `"ngày mai"/tomorrow = ${fmtD(new Date(now.getTime() + 86400000))}; ` +
+    `"tháng này" = ${fmtD(now).slice(0, 7)}.` +
     `\n\n## Operating rules\n` +
+    `- Relative time ("hôm qua", "tuần trước", "tháng trước", "3 ngày ` +
+    `nữa"...): ALWAYS resolve it to exact date(s) from the anchor above ` +
+    `BEFORE calling tools or answering — use those dates in tool args ` +
+    `and state the exact date range you used in the reply. Never answer ` +
+    `for a different period than the one asked.\n` +
     `- You are in a group chat. Messages are prefixed with the sender name ` +
     `like [Name]: text. You can see every message in the room.\n` +
     `- Your display name is "${bot.name}", but people may address you by ` +
