@@ -228,6 +228,9 @@ for (const [col, ddl] of [
   if (!cols.some((c) => c.name === "deepgram_api_key")) {
     db.exec(`ALTER TABLE user_settings ADD COLUMN deepgram_api_key TEXT`);
   }
+  if (!cols.some((c) => c.name === "gemini_api_key")) {
+    db.exec(`ALTER TABLE user_settings ADD COLUMN gemini_api_key TEXT`);
+  }
 }
 
 // Migrate: rooms.kind — 'bot_dm' marks private bot↔bot channels created by

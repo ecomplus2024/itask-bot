@@ -7,12 +7,13 @@ export type UserSettings = {
   aiModel: string | null;
   aiSystemPrompt: string | null;
   deepgramApiKey: string | null;
+  geminiApiKey: string | null;
 };
 
 export function getUserSettings(userId: number): UserSettings {
   const row = db
     .prepare(
-      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key
+      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key
        FROM user_settings WHERE user_id = ?`
     )
     .get(userId) as
@@ -22,6 +23,7 @@ export function getUserSettings(userId: number): UserSettings {
         ai_model: string | null;
         ai_system_prompt: string | null;
         deepgram_api_key: string | null;
+        gemini_api_key: string | null;
       }
     | undefined;
   return {
@@ -30,26 +32,36 @@ export function getUserSettings(userId: number): UserSettings {
     aiModel: row?.ai_model ?? null,
     aiSystemPrompt: row?.ai_system_prompt ?? null,
     deepgramApiKey: row?.deepgram_api_key ?? null,
+    geminiApiKey: row?.gemini_api_key ?? null,
   };
 }
 
 export function saveUserSettings(userId: number, s: UserSettings) {
   db.prepare(
-    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        ai_base_url = excluded.ai_base_url,
        ai_api_key = excluded.ai_api_key,
        ai_model = excluded.ai_model,
        ai_system_prompt = excluded.ai_system_prompt,
-       deepgram_api_key = excluded.deepgram_api_key`
-  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt, s.deepgramApiKey);
+       deepgram_api_key = excluded.deepgram_api_key,
+       gemini_api_key = excluded.gemini_api_key`
+  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt, s.deepgramApiKey, s.geminiApiKey);
 }
 
 /** Deepgram key for voice chat: user setting wins, env fallback. */
 export function resolveDeepgramKey(userId: number): string | null {
   return getUserSettings(userId).deepgramApiKey ||
     process.env.DEEPGRAM_API_KEY ||
+    null;
+}
+
+/** Gemini key for Live API voice mode: user setting wins, env fallback. */
+export function resolveGeminiKey(userId: number): string | null {
+  return getUserSettings(userId).geminiApiKey ||
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
     null;
 }
 

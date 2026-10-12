@@ -22,6 +22,7 @@ export async function GET() {
       aiModel: s.aiModel ?? "",
       aiSystemPrompt: s.aiSystemPrompt ?? "",
       deepgramApiKey: mask(s.deepgramApiKey),
+      geminiApiKey: mask(s.geminiApiKey),
     },
     defaults: {
       aiBaseUrl: env.baseUrl,
@@ -29,6 +30,11 @@ export async function GET() {
       aiSystemPrompt: env.systemPrompt,
       hasEnvKey: !!env.apiKey && env.apiKey !== "sk-your-key-here",
       hasDgKey: !!(s.deepgramApiKey || process.env.DEEPGRAM_API_KEY),
+      hasGeminiKey: !!(
+        s.geminiApiKey ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY
+      ),
     },
   });
 }
@@ -45,6 +51,8 @@ export async function PUT(req: NextRequest) {
   if (!apiKey || apiKey.includes("•")) apiKey = current.aiApiKey;
   let dgKey = body.deepgramApiKey ?? null;
   if (!dgKey || dgKey.includes("•")) dgKey = current.deepgramApiKey;
+  let gmKey = body.geminiApiKey ?? null;
+  if (!gmKey || gmKey.includes("•")) gmKey = current.geminiApiKey;
 
   saveUserSettings(user.id, {
     aiBaseUrl: body.aiBaseUrl?.trim() || null,
@@ -52,6 +60,7 @@ export async function PUT(req: NextRequest) {
     aiModel: body.aiModel?.trim() || null,
     aiSystemPrompt: body.aiSystemPrompt?.trim() || null,
     deepgramApiKey: dgKey?.trim() || null,
+    geminiApiKey: gmKey?.trim() || null,
   });
   return NextResponse.json({ ok: true });
 }

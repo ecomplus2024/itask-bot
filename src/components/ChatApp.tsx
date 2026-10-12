@@ -10,6 +10,7 @@ import BotAvatar from "./BotAvatar";
 import BotDialog, { BotData } from "./BotDialog";
 import SettingsDialog from "./SettingsDialog";
 import { VoiceSession, type VoiceStatus } from "@/lib/voice";
+import { LiveSession } from "@/lib/live";
 
 type Bot = {
   id: number;
@@ -53,7 +54,7 @@ export default function ChatApp({
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("off");
   const [voiceInterim, setVoiceInterim] = useState("");
   const [voiceError, setVoiceError] = useState("");
-  const voiceRef = useRef<VoiceSession | null>(null);
+  const voiceRef = useRef<(VoiceSession | LiveSession) | null>(null);
 
   useEffect(() => {
     setDark(document.documentElement.classList.contains("dark"));
@@ -220,7 +221,7 @@ export default function ChatApp({
   const voiceFedRef = useRef(false);
   const spokenKeyRef = useRef<string | number | null>(null);
 
-  function toggleVoice() {
+  async function toggleVoice() {
     if (voiceRef.current) {
       voiceRef.current.stop();
       voiceRef.current = null;
@@ -231,6 +232,32 @@ export default function ChatApp({
     // Don't speak history that already exists when turning voice on.
     const last = messages[messages.length - 1];
     if (last) spokenKeyRef.current = last.id ?? last.content;
+
+    // Prefer real-time mode (Gemini Live, native audio) for single-bot
+    // rooms when a key is configured; otherwise fall back to the
+    // Deepgram STT cascade.
+    let live: LiveSession | null = null;
+    if (activeRoom) {
+      const ctx = await fetch(`/api/live/context?roomId=${activeRoom.id}`)
+        .then((r) => r.json())
+        .catch(() => null);
+      if (ctx?.available) {
+        live = new LiveSession(activeRoom.id, {
+          onStatus: setVoiceStatus,
+          onInterim: setVoiceInterim,
+          onError: (code) => {
+            setVoiceError(code);
+            if (code === "no_gemini_key") setSettingsOpen(true);
+          },
+        });
+      }
+    }
+    if (live) {
+      voiceRef.current = live;
+      live.start();
+      return;
+    }
+
     const session = new VoiceSession({
       onStatus: setVoiceStatus,
       onInterim: setVoiceInterim,
@@ -270,7 +297,7 @@ export default function ChatApp({
     prevStreaming.current = streaming;
     if (!wasStreaming || streaming) return;
     const last = messages[messages.length - 1];
-    if (voiceRef.current && voiceFedRef.current) {
+    if (voiceRef.current instanceof VoiceSession && voiceFedRef.current) {
       voiceRef.current.speakFlush();
       if (last) spokenKeyRef.current = last.id ?? last.content;
     }
@@ -290,7 +317,8 @@ export default function ChatApp({
     const key = last.id ?? last.content;
     if (spokenKeyRef.current === key) return;
     spokenKeyRef.current = key;
-    voiceRef.current.speak(last.content);
+    if (voiceRef.current instanceof VoiceSession)
+      voiceRef.current.speak(last.content);
   }, [messages, streaming, voiceStatus]);
 
   function openNewRoom() {
@@ -390,7 +418,8 @@ export default function ChatApp({
           } else if (e.type === "bot_start") {
             // A new bot turn begins — flush the previous speaker's
             // sentence buffer so its tail isn't held back.
-            voiceRef.current?.speakFlush();
+            if (voiceRef.current instanceof VoiceSession)
+              voiceRef.current.speakFlush();
             setMessages((ms) => [
               ...ms,
               {
@@ -412,7 +441,8 @@ export default function ChatApp({
             });
           } else if (e.type === "delta") {
             voiceFedRef.current = true;
-            voiceRef.current?.speakStream(e.text);
+            if (voiceRef.current instanceof VoiceSession)
+              voiceRef.current.speakStream(e.text);
             setMessages((ms) => {
               const copy = [...ms];
               const last = copy[copy.length - 1];
@@ -888,6 +918,11 @@ export default function ChatApp({
                             dg_error: "dgError",
                             dg_closed: "dgClosed",
                             no_deepgram_key: "voiceNoKey",
+                            no_gemini_key: "noGeminiKey",
+                            live_error: "liveError",
+                            live_closed: "liveError",
+                            live_unavailable: "liveError",
+                            not_single_bot: "liveError",
                           } as const
                         )[voiceError] ?? "dgError"
                       )

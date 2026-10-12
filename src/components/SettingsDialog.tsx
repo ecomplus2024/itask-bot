@@ -11,6 +11,7 @@ type FormState = {
   aiModel: string;
   aiSystemPrompt: string;
   deepgramApiKey: string;
+  geminiApiKey: string;
 };
 
 const SECTIONS = ["aiConfig", "skills", "mcp", "update"] as const;
@@ -40,6 +41,7 @@ export default function SettingsDialog({
     aiModel: "",
     aiSystemPrompt: "",
     deepgramApiKey: "",
+    geminiApiKey: "",
   });
   const [defaults, setDefaults] = useState<{
     aiBaseUrl: string;
@@ -47,6 +49,7 @@ export default function SettingsDialog({
     aiSystemPrompt: string;
     hasEnvKey: boolean;
     hasDgKey?: boolean;
+    hasGeminiKey?: boolean;
   } | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [version, setVersion] = useState("");
@@ -86,6 +89,7 @@ export default function SettingsDialog({
           aiModel: data.settings.aiModel,
           aiSystemPrompt: data.settings.aiSystemPrompt,
           deepgramApiKey: data.settings.deepgramApiKey ?? "",
+          geminiApiKey: data.settings.geminiApiKey ?? "",
         });
       });
   }, [open]);
@@ -287,6 +291,22 @@ export default function SettingsDialog({
               />
               <p className="mt-1 text-xs text-zinc-500">
                 {t("deepgramHint")}
+              </p>
+            </div>
+
+            <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
+              <label className="block text-sm font-medium mb-1">
+                {t("geminiKey")}
+              </label>
+              <input
+                type="password"
+                className={inputCls}
+                value={form.geminiApiKey}
+                placeholder={defaults?.hasGeminiKey ? "••••••••" : "Key from aistudio.google.com"}
+                onChange={(e) => set("geminiApiKey")(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-zinc-500">
+                {t("geminiHint")}
               </p>
             </div>
             </div>

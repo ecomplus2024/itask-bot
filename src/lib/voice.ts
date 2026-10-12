@@ -31,22 +31,11 @@ const FILLERS = [
   "Vâng, để em xem ạ.",
 ];
 
-const WORKLET_SRC = `
-class P extends AudioWorkletProcessor {
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (ch && ch.length) this.port.postMessage(ch.slice(0));
-    return true;
-  }
-}
-registerProcessor('pcm', P);
-`;
+import { startMicCapture, type MicCapture } from "./mic";
 
 export class VoiceSession {
   private ws: WebSocket | null = null;
-  private stream: MediaStream | null = null;
-  private ctx: AudioContext | null = null;
-  private node: AudioWorkletNode | null = null;
+  private mic: MicCapture | null = null;
   private finals: string[] = [];
   private ev: VoiceEvents;
   private status: VoiceStatus = "off";
@@ -80,17 +69,18 @@ export class VoiceSession {
       return;
     }
 
-    // 1) Mic
+    // 1) Mic → PCM16 16kHz chunks → relay WebSocket
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
+      this.mic = await startMicCapture((pcm) => {
+        if (this.ws?.readyState === WebSocket.OPEN)
+          this.ws.send(pcm.buffer as ArrayBuffer);
       });
-    } catch {
-      this.fail("mic_denied");
+    } catch (e) {
+      this.fail(
+        e instanceof Error && e.message === "insecure_context"
+          ? "insecure_context"
+          : "mic_denied"
+      );
       return;
     }
 
@@ -105,28 +95,7 @@ export class VoiceSession {
     this.ws.onclose = () => {
       if (this.status !== "off" && this.status !== "error") this.stop();
     };
-
-    // 3) Audio pipeline: capture at native rate, resample to 16k PCM16
-    try {
-      this.ctx = new AudioContext();
-      const src = this.ctx.createMediaStreamSource(this.stream);
-      const url = URL.createObjectURL(
-        new Blob([WORKLET_SRC], { type: "application/javascript" })
-      );
-      await this.ctx.audioWorklet.addModule(url);
-      URL.revokeObjectURL(url);
-      this.node = new AudioWorkletNode(this.ctx, "pcm");
-      const inRate = this.ctx.sampleRate;
-      this.node.port.onmessage = (e) => {
-        const pcm = downsample(e.data as Float32Array, inRate, 16000);
-        if (this.ws?.readyState === WebSocket.OPEN)
-          this.ws.send(pcm.buffer as ArrayBuffer);
-      };
-      src.connect(this.node);
-      this.setStatus("listening");
-    } catch {
-      this.fail("audio_pipeline");
-    }
+    this.setStatus("listening");
   }
 
   /** Tear down hardware/sockets but stay in the 'error' state so the
@@ -146,12 +115,8 @@ export class VoiceSession {
     } catch {}
     this.ws?.close();
     this.ws = null;
-    this.node?.disconnect();
-    this.node = null;
-    this.ctx?.close().catch(() => {});
-    this.ctx = null;
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.stream = null;
+    this.mic?.stop();
+    this.mic = null;
     this.ev.onInterim("");
   }
 
@@ -379,20 +344,4 @@ export class VoiceSession {
       this.ev.onStatus("off");
     }
   }
-}
-
-// Linear-interpolation resampler → PCM16 little-endian.
-function downsample(input: Float32Array, fromRate: number, toRate: number) {
-  const ratio = fromRate / toRate;
-  const out = new Int16Array(Math.floor(input.length / ratio));
-  for (let i = 0; i < out.length; i++) {
-    const pos = i * ratio;
-    const idx = Math.floor(pos);
-    const frac = pos - idx;
-    const a = input[idx] ?? 0;
-    const b = input[idx + 1] ?? a;
-    const s = Math.max(-1, Math.min(1, a + (b - a) * frac));
-    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-  }
-  return out;
 }
