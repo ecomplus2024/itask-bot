@@ -52,6 +52,7 @@ export default function ChatApp({
   const [isDesktop, setIsDesktop] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("off");
   const [voiceInterim, setVoiceInterim] = useState("");
+  const [voiceError, setVoiceError] = useState("");
   const voiceRef = useRef<VoiceSession | null>(null);
 
   useEffect(() => {
@@ -215,19 +216,27 @@ export default function ChatApp({
   const streamingRef = useRef(false);
   streamingRef.current = streaming;
 
+  const pendingVoice = useRef<string[]>([]);
+
   function toggleVoice() {
     if (voiceRef.current) {
       voiceRef.current.stop();
       voiceRef.current = null;
+      pendingVoice.current = [];
       return;
     }
+    setVoiceError("");
     const session = new VoiceSession({
       onStatus: setVoiceStatus,
       onInterim: setVoiceInterim,
-      onFinal: (text) => sendRef.current(text),
-      onError: (msg) => {
-        if (msg === "no_deepgram_key" || msg === "mic_denied")
-          setSettingsOpen(true);
+      // Queue while a bot reply is streaming so spoken turns aren't dropped.
+      onFinal: (text) => {
+        if (streamingRef.current) pendingVoice.current.push(text);
+        else sendRef.current(text);
+      },
+      onError: (code) => {
+        setVoiceError(code);
+        if (code === "no_deepgram_key") setSettingsOpen(true);
       },
     });
     voiceRef.current = session;
@@ -243,7 +252,8 @@ export default function ChatApp({
   }, [activeRoom?.id]);
 
   // Speak the bot's reply once streaming settles and the last message
-  // is a finished bot message.
+  // is a finished bot message — then send anything the user said while
+  // the bot was talking.
   const prevStreaming = useRef(false);
   useEffect(() => {
     const wasStreaming = prevStreaming.current;
@@ -252,6 +262,11 @@ export default function ChatApp({
     const last = messages[messages.length - 1];
     if (voiceRef.current && last?.kind === "bot" && !last.streaming) {
       voiceRef.current.speak(last.content);
+    }
+    if (pendingVoice.current.length) {
+      const text = pendingVoice.current.join(" ").trim();
+      pendingVoice.current = [];
+      if (text) sendRef.current(text);
     }
   }, [streaming, messages]);
 
@@ -833,6 +848,21 @@ export default function ChatApp({
                 placeholder={`${t("messageTo")} ${activeRoom.name}`}
                 voiceStatus={voiceStatus}
                 voiceInterim={voiceInterim}
+                voiceError={
+                  voiceError
+                    ? t(
+                        (
+                          {
+                            mic_denied: "micDenied",
+                            insecure_context: "insecureContext",
+                            dg_error: "dgError",
+                            dg_closed: "dgClosed",
+                            no_deepgram_key: "voiceNoKey",
+                          } as const
+                        )[voiceError] ?? "dgError"
+                      )
+                    : ""
+                }
                 onToggleVoice={toggleVoice}
               />
             </div>

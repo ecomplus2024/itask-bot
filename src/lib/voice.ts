@@ -61,8 +61,15 @@ export class VoiceSession {
   }
 
   async start() {
-    if (this.status !== "off") return;
+    if (this.status !== "off" && this.status !== "error") return;
     this.setStatus("connecting");
+
+    // Mic capture requires a secure context (localhost or HTTPS) —
+    // over plain http://<lan-ip> browsers block mediaDevices entirely.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.fail("insecure_context");
+      return;
+    }
 
     // 1) Mic
     try {
@@ -74,9 +81,7 @@ export class VoiceSession {
         },
       });
     } catch {
-      this.setStatus("error");
-      this.ev.onError("mic_denied");
-      this.stop();
+      this.fail("mic_denied");
       return;
     }
 
@@ -89,7 +94,7 @@ export class VoiceSession {
     this.ws.onopen = () =>
       this.ws?.send(JSON.stringify({ type: "voice_start" }));
     this.ws.onclose = () => {
-      if (this.status !== "off") this.stop();
+      if (this.status !== "off" && this.status !== "error") this.stop();
     };
 
     // 3) Audio pipeline: capture at native rate, resample to 16k PCM16
@@ -110,11 +115,35 @@ export class VoiceSession {
       };
       src.connect(this.node);
       this.setStatus("listening");
-    } catch (e) {
-      this.setStatus("error");
-      this.ev.onError(String(e));
-      this.stop();
+    } catch {
+      this.fail("audio_pipeline");
     }
+  }
+
+  /** Tear down hardware/sockets but stay in the 'error' state so the
+   * UI can keep showing what went wrong until the user dismisses it. */
+  private fail(code: string) {
+    this.teardown();
+    this.status = "error";
+    this.ev.onStatus("error");
+    this.ev.onError(code);
+  }
+
+  private teardown() {
+    this.cancelSpeech();
+    this.finals = [];
+    try {
+      this.ws?.send(JSON.stringify({ type: "voice_stop" }));
+    } catch {}
+    this.ws?.close();
+    this.ws = null;
+    this.node?.disconnect();
+    this.node = null;
+    this.ctx?.close().catch(() => {});
+    this.ctx = null;
+    this.stream?.getTracks().forEach((t) => t.stop());
+    this.stream = null;
+    this.ev.onInterim("");
   }
 
   private onMessage(data: string) {
@@ -132,12 +161,11 @@ export class VoiceSession {
     }
 
     if (m.type === "voice_error") {
-      this.ev.onError(m.message ?? "voice_error");
-      if (m.message === "no_deepgram_key") this.stop();
+      this.fail(m.message === "no_deepgram_key" ? "no_deepgram_key" : "dg_error");
       return;
     }
     if (m.type === "voice_closed") {
-      this.stop();
+      this.fail("dg_closed");
       return;
     }
 
@@ -206,20 +234,7 @@ export class VoiceSession {
   }
 
   stop() {
-    this.cancelSpeech();
-    this.finals = [];
-    try {
-      this.ws?.send(JSON.stringify({ type: "voice_stop" }));
-    } catch {}
-    this.ws?.close();
-    this.ws = null;
-    this.node?.disconnect();
-    this.node = null;
-    this.ctx?.close().catch(() => {});
-    this.ctx = null;
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.stream = null;
-    this.ev.onInterim("");
+    this.teardown();
     if (this.status !== "off") {
       this.status = "off";
       this.ev.onStatus("off");

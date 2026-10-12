@@ -11,6 +11,7 @@ export default function Composer({
   placeholder,
   voiceStatus = "off",
   voiceInterim = "",
+  voiceError = "",
   onToggleVoice,
 }: {
   onSend: (text: string) => void;
@@ -19,6 +20,7 @@ export default function Composer({
   placeholder: string;
   voiceStatus?: VoiceStatus;
   voiceInterim?: string;
+  voiceError?: string;
   onToggleVoice?: () => void;
 }) {
   const { t } = useT();
@@ -57,12 +59,18 @@ export default function Composer({
                     : "bg-emerald-500 animate-pulse"
             }`}
           />
-          <span className="text-xs text-zinc-500 truncate">
+          <span
+            className={`text-xs truncate ${
+              voiceStatus === "error" ? "text-red-500" : "text-zinc-500"
+            }`}
+          >
             {voiceStatus === "connecting"
               ? "…"
               : voiceStatus === "speaking"
                 ? "🔊"
-                : voiceInterim || t("listening")}
+                : voiceStatus === "error"
+                  ? voiceError || "…"
+                  : voiceInterim || t("listening")}
           </span>
         </div>
       )}
