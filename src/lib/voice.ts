@@ -200,10 +200,14 @@ export class VoiceSession {
     if (text) this.ev.onFinal(text);
   }
 
-  /** Speak a bot reply using a Vietnamese browser voice. */
-  speak(text: string) {
-    if (typeof speechSynthesis === "undefined" || this.status === "off")
-      return;
+  private audio: HTMLAudioElement | null = null;
+  private audioUrl: string | null = null;
+
+  /** Speak a bot reply — server-side Edge neural vi-VN TTS (works in
+   * Electron, which has no OS/browser Vietnamese voice), falling back
+   * to speechSynthesis when the endpoint is unreachable. */
+  async speak(text: string) {
+    if (this.status === "off") return;
     const clean = text
       .replace(/\[\[SUGGEST:[^\]]*\]\]/g, "")
       .replace(/\[[^\]]*\]\([^)]*\)/g, "") // markdown links
@@ -211,7 +215,45 @@ export class VoiceSession {
       .replace(/\s+/g, " ")
       .trim();
     if (!clean) return;
-    speechSynthesis.cancel();
+    this.cancelSpeech();
+
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: clean }),
+      });
+      if (!res.ok) throw new Error("tts_failed");
+      const url = URL.createObjectURL(await res.blob());
+      const audio = new Audio(url);
+      this.audio = audio;
+      this.audioUrl = url;
+      audio.onplay = () => {
+        if (this.status !== "off") this.setStatus("speaking");
+      };
+      audio.onended = audio.onerror = () => this.releaseAudio();
+      // Voice may have been stopped while the fetch was in flight.
+      if ((this.status as VoiceStatus) === "off") {
+        this.releaseAudio();
+        return;
+      }
+      await audio.play();
+    } catch {
+      this.releaseAudio();
+      this.speakFallback(clean);
+    }
+  }
+
+  private releaseAudio() {
+    this.audio?.pause();
+    this.audio = null;
+    if (this.audioUrl) URL.revokeObjectURL(this.audioUrl);
+    this.audioUrl = null;
+    if (this.status === "speaking") this.setStatus("listening");
+  }
+
+  private speakFallback(clean: string) {
+    if (typeof speechSynthesis === "undefined") return;
     const u = new SpeechSynthesisUtterance(clean.slice(0, 1200));
     const voices = speechSynthesis.getVoices();
     const vi =
@@ -230,6 +272,13 @@ export class VoiceSession {
   }
 
   cancelSpeech() {
+    if (this.audio) {
+      this.audio.pause();
+      if (this.audioUrl) URL.revokeObjectURL(this.audioUrl);
+      this.audio = null;
+      this.audioUrl = null;
+      if (this.status === "speaking") this.setStatus("listening");
+    }
     if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
   }
 
