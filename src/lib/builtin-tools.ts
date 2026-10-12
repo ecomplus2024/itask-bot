@@ -12,6 +12,14 @@ const FILE_MIME: Record<string, string> = {
   md: "text/markdown",
   txt: "text/plain",
   json: "application/json",
+  // Images: svg is text the bot can author itself (charts, diagrams);
+  // raster formats come in via a `url` download or a base64 data URL.
+  svg: "image/svg+xml",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
 };
 
 /**
@@ -305,7 +313,7 @@ export function getBuiltinTools(
             function: {
               name: "itask__create_file",
               description:
-                "Create a downloadable file for the user — reports, exports, documents. Supported: .csv (comma-separated text), .xlsx (pass a JSON array of row objects, e.g. [{\"SP\":\"A\",\"SL\":5}]), .html (full page/report), .md, .txt, .json. The file link is attached to your reply automatically — mention it briefly.",
+                "Create a downloadable file for the user — reports, exports, documents, images. Supported: .csv, .xlsx (JSON array of row objects), .html, .md, .txt, .json, .svg (author the markup yourself — great for charts/diagrams), .png/.jpg/.webp/.gif (pass `url` to fetch an existing image, or `content` as a base64 data URL). The file link is attached to your reply automatically — for images also embed it inline with markdown ![tên](/files/ID) so it shows as a picture.",
               parameters: {
                 type: "object",
                 properties: {
@@ -316,10 +324,15 @@ export function getBuiltinTools(
                   content: {
                     type: "string",
                     description:
-                      "File contents: CSV text, HTML document, markdown/plain text, or a JSON array of row objects for .xlsx",
+                      "File contents: CSV text, HTML document, markdown/plain text, SVG markup, a JSON array of row objects for .xlsx, or a base64 data URL for raster images",
+                  },
+                  url: {
+                    type: "string",
+                    description:
+                      "Optional — fetch the file content from this URL instead of `content` (use for web images/binary files)",
                   },
                 },
-                required: ["filename", "content"],
+                required: ["filename"],
               },
             },
           },
@@ -1036,7 +1049,26 @@ export function getBuiltinTools(
         if (!mime)
           return `Unsupported extension ".${ext}" — use: ${Object.keys(FILE_MIME).join(", ")}`;
 
+        let data: Buffer;
+        if (args.url) {
+          // Fetch an existing file (e.g. a web image) and store it.
+          try {
+            const res = await fetch(String(args.url), {
+              signal: AbortSignal.timeout(15_000),
+            });
+            if (!res.ok) return `Could not download: HTTP ${res.status}`;
+            data = Buffer.from(await res.arrayBuffer());
+          } catch (e) {
+            return `Could not download: ${e instanceof Error ? e.message : e}`;
+          }
+          if (data.length > 15 * 1024 * 1024) return "File too large (>15MB)";
+        } else {
         let text = String(args.content ?? "");
+        // Base64 data URL (e.g. a generated raster image)
+        const dataUrl = /^data:([\w/+.-]+);base64,([\s\S]+)$/.exec(text.trim());
+        if (dataUrl) {
+          data = Buffer.from(dataUrl[2], "base64");
+        } else {
         // Models often wrap file contents in markdown fences (```html … ```)
         // or emit HTML-escaped markup — clean both so the file renders.
         text = text
@@ -1050,7 +1082,6 @@ export function getBuiltinTools(
             .replace(/&#39;/g, "'")
             .replace(/&amp;/g, "&");
         }
-        let data: Buffer;
         if (ext === "xlsx") {
           try {
             const XLSX = await import("xlsx");
@@ -1078,6 +1109,8 @@ export function getBuiltinTools(
           }
         } else {
           data = Buffer.from(text, "utf8");
+        }
+        }
         }
 
         const name = ext ? rawName : `${rawName}.txt`;

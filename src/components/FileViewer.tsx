@@ -71,8 +71,21 @@ export default function FileViewer({ fileId }: { fileId: number }) {
     );
 
   const isHtml = meta.mime === "text/html";
+  const isImage = meta.mime.startsWith("image/");
   const isTable = meta.rows && meta.rows.length > 0;
 
+  if (isImage) {
+    return (
+      <div className="h-full flex items-center justify-center p-4 bg-zinc-50 dark:bg-zinc-900">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`/api/files/${fileId}`}
+          alt={meta.name}
+          className="max-w-full max-h-full object-contain rounded-lg"
+        />
+      </div>
+    );
+  }
   if (isHtml) {
     return (
       // sandbox without allow-same-origin: scripts run but cannot

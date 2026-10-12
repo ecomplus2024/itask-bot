@@ -154,11 +154,38 @@ export default function RoomMessageList({
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
+                            img: ({ src, alt }) => (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={typeof src === "string" ? src : ""}
+                                alt={alt ?? "image"}
+                                className="max-w-full max-h-72 rounded-lg border border-zinc-200 dark:border-zinc-700 my-1 cursor-zoom-in object-contain bg-white"
+                                onClick={() =>
+                                  window.open(
+                                    typeof src === "string" ? src : "",
+                                    "_blank"
+                                  )
+                                }
+                              />
+                            ),
                             a: ({ href, children }) => {
+                              const label = String(children ?? "file");
+                              const imgExt = /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i;
                               const m2 = href?.match(/^\/files\/(\d+)/);
                               if (m2) {
                                 const fid = Number(m2[1]);
-                                const label = String(children ?? "file");
+                                // Image files render as pictures, not chips
+                                if (imgExt.test(label)) {
+                                  return (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={href}
+                                      alt={label}
+                                      className="max-w-full max-h-72 rounded-lg border border-zinc-200 dark:border-zinc-700 my-1 cursor-zoom-in object-contain bg-white"
+                                      onClick={() => setPreviewFileId(fid)}
+                                    />
+                                  );
+                                }
                                 const Icon = fileIcon(label);
                                 return (
                                   <a
@@ -177,6 +204,19 @@ export default function RoomMessageList({
                                       {children}
                                     </span>
                                   </a>
+                                );
+                              }
+                              // External links ending in an image
+                              // extension render inline as pictures.
+                              if (href && imgExt.test(href)) {
+                                return (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={href}
+                                    alt={label}
+                                    className="max-w-full max-h-72 rounded-lg border border-zinc-200 dark:border-zinc-700 my-1 cursor-zoom-in object-contain bg-white"
+                                    onClick={() => window.open(href, "_blank")}
+                                  />
                                 );
                               }
                               return (
