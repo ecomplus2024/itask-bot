@@ -1,6 +1,7 @@
 import db from "./db";
-import { Bot, getBot } from "./bots";
+import { Bot, getBot, resolveBotConfig } from "./bots";
 import { runBotInstruction } from "./orchestrate";
+import { chatOnce } from "./ai";
 import { nextCronRunUtc } from "./cron";
 
 type Task = {
@@ -21,6 +22,7 @@ const TICK_MS = 30_000;
 // task whose bot run is still in flight (runs can take longer than a tick).
 const running = new Set<number>();
 const proactiveRunning = new Set<number>();
+let consolidateRunning = false;
 let tickInFlight = false;
 
 /**
@@ -162,9 +164,129 @@ async function runDueTasks() {
         proactiveRunning.delete(p.id);
       }
     }
+    // Memory consolidation: when a bot has accumulated enough memories,
+    // once a day it re-reads the whole store and has the AI merge
+    // duplicates, drop entries irrelevant to its role, and prune trivia —
+    // like an employee tidying their notebook in quiet moments. Logs are
+    // untouched (they expire on their own).
+    if (!consolidateRunning) {
+      const candidate = db
+        .prepare(
+          `SELECT b.id, b.user_id FROM bots b
+           WHERE (b.last_consolidated_at IS NULL
+                  OR datetime(b.last_consolidated_at, '+1 day') <= datetime('now'))
+             AND (SELECT COUNT(*) FROM bot_memories m
+                  WHERE m.bot_id = b.id AND m.kind != 'log') >= 15
+           ORDER BY b.last_consolidated_at LIMIT 1`
+        )
+        .get() as { id: number; user_id: number } | undefined;
+      if (candidate) {
+        consolidateRunning = true;
+        // Claim BEFORE the AI call — a slow pass must not re-trigger.
+        db.prepare(
+          "UPDATE bots SET last_consolidated_at = datetime('now') WHERE id = ?"
+        ).run(candidate.id);
+        consolidateBotMemories(candidate.id, candidate.user_id)
+          .catch((e) =>
+            console.error(
+              `[scheduler] memory consolidation bot ${candidate.id}:`,
+              e
+            )
+          )
+          .finally(() => {
+            consolidateRunning = false;
+          });
+      }
+    }
   } finally {
     tickInFlight = false;
   }
+}
+
+/**
+ * One AI pass that tidies a bot's memory store. Replaces core+note rows
+ * with the cleaned list inside a transaction — aborts (keeps everything)
+ * when the model output is unusable, so a bad pass can never wipe memory.
+ */
+async function consolidateBotMemories(botId: number, userId: number) {
+  const bot = getBot(botId, userId);
+  if (!bot) return;
+  const rows = db
+    .prepare(
+      `SELECT kind, topic, content FROM bot_memories
+       WHERE bot_id = ? AND kind != 'log' ORDER BY id`
+    )
+    .all(botId) as { kind: string; topic: string | null; content: string }[];
+  if (rows.length < 15) return;
+
+  const config = resolveBotConfig(bot);
+  const res = await chatOnce(
+    [
+      {
+        role: "user",
+        content:
+          `You are ${bot.name}${bot.role ? ` (${bot.role})` : ""}. Below is ` +
+          `your long-term memory. Tidy it: merge duplicates/overlaps, DROP ` +
+          `entries not relevant to YOUR role or no longer useful, keep ` +
+          `accurate facts verbatim. Return ONLY a JSON array, at most 100 ` +
+          `items: [{"kind":"core"|"note","topic":"optional","content":"..."}]\n\n` +
+          `MEMORY (${rows.length}):\n` +
+          rows
+            .map(
+              (r, i) =>
+                `${i + 1}. [${r.kind}${r.topic ? `:${r.topic}` : ""}] ${r.content}`
+            )
+            .join("\n"),
+      },
+    ],
+    { ...config, systemPrompt: "You output only valid JSON arrays." },
+    []
+  );
+
+  const text = (res.content ?? "")
+    .trim()
+    .replace(/^```(?:json)?\s*|\s*```$/g, "");
+  let cleaned: { kind?: string; topic?: string; content?: string }[];
+  try {
+    cleaned = JSON.parse(text);
+  } catch {
+    return; // unparseable — keep the store as-is
+  }
+  if (!Array.isArray(cleaned) || cleaned.length === 0) return;
+
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM bot_memories WHERE bot_id = ? AND kind != 'log'").run(
+      botId
+    );
+    const ins = db.prepare(
+      "INSERT INTO bot_memories (bot_id, kind, topic, content) VALUES (?, ?, ?, ?)"
+    );
+    for (const m of cleaned.slice(0, 100)) {
+      if (!m.content) continue;
+      ins.run(
+        botId,
+        m.kind === "note" ? "note" : "core",
+        m.topic?.trim() || null,
+        String(m.content).trim().slice(0, 2000)
+      );
+    }
+  });
+  tx();
+
+  const kept = db
+    .prepare(
+      "SELECT COUNT(*) c FROM bot_memories WHERE bot_id = ? AND kind != 'log'"
+    )
+    .get(botId) as { c: number };
+  db.prepare(
+    "INSERT INTO bot_memories (bot_id, kind, content) VALUES (?, 'log', ?)"
+  ).run(
+    botId,
+    `[${new Date().toLocaleString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" })}] Memory review: ${rows.length} → ${kept.c} mục`
+  );
+  console.log(
+    `[scheduler] bot ${bot.name}: memory consolidated ${rows.length} → ${kept.c}`
+  );
 }
 
 export function startScheduler() {

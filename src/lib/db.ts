@@ -203,6 +203,7 @@ for (const [col, ddl] of [
 for (const [col, ddl] of [
   ["proactive_minutes", "INTEGER NOT NULL DEFAULT 0"],
   ["last_proactive_at", "TEXT"],
+  ["last_consolidated_at", "TEXT"],
 ] as const) {
   const cols = db.pragma("table_info(bots)") as { name: string }[];
   if (!cols.some((c) => c.name === col)) {
