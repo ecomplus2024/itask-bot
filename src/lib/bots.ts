@@ -88,28 +88,24 @@ export function getBotTopicNotes(
     .map((x) => (x.r.topic ? `[${x.r.topic}] ` : "") + x.r.content);
 }
 
-export function getBotSkillsPrompt(botId: number, userId: number): string {
-  // Lazy loading: only the skill INDEX goes into the prompt — full
-  // procedure text is loaded on demand via itask__use_skill, so prompts
-  // stay small no matter how many skills accumulate.
-  const rows = db
+export type SkillRow = {
+  id: number;
+  name: string;
+  description: string | null;
+  content: string;
+};
+
+// All enabled skills of the user, shared across bots. The prompt only
+// gets the index; full content is injected by orchestrate when Jev picks
+// a match, or loaded lazily via itask__use_skill.
+export function getSkillRows(userId: number): SkillRow[] {
+  return db
     .prepare(
-      `SELECT id, name, description FROM skills
+      `SELECT id, name, description, content FROM skills
        WHERE user_id = ? AND enabled = 1
        ORDER BY id`
     )
-    .all(userId) as { id: number; name: string; description: string | null }[];
-  if (!rows.length) return "";
-  return (
-    "\n\n## Skills (learned procedures — loaded on demand)\n" +
-    rows
-      .map(
-        (s) => `- #${s.id} ${s.name}${s.description ? ` — ${s.description}` : ""}`
-      )
-      .join("\n") +
-    `\nWhen a task matches a skill above, FIRST call itask__use_skill ` +
-    `with its id to load the exact verified steps, then follow them.`
-  );
+    .all(userId) as SkillRow[];
 }
 
 /**
@@ -230,8 +226,7 @@ export function resolveBotConfig(bot: Bot): AIConfig {
   const promptParts: { id: string; label: string; text: string }[] = [
     { id: "identity", label: "Identity & operating rules", text: identity },
   ];
-  const skills = getBotSkillsPrompt(bot.id, bot.user_id);
-  if (skills) promptParts.push({ id: "skills", label: "Skills", text: skills });
+
 
   const memories = getBotMemories(bot.id);
   if (memories.length) {

@@ -3,6 +3,7 @@ import {
   Bot,
   getBotTopicNotes,
   getRoomBots,
+  getSkillRows,
   resolveBotConfig,
   resolveResponders,
 } from "./bots";
@@ -396,8 +397,8 @@ export async function prepareBotTurn(
       );
     }
 
-    // Topic notes relevant to this message + the last couple of days of
-    // the bot's work log — structured memory beyond flat core facts.
+    // Topic notes relevant to this message — structured memory beyond
+    // flat core facts.
     const notes = getBotTopicNotes(bot.id, lastUserMsg);
     if (notes.length) {
       addPart(
@@ -407,6 +408,39 @@ export async function prepareBotTurn(
         "\n\n## Topic notes\n" + notes.map((n) => `- ${n}`).join("\n")
       );
     }
+  }
+
+  // Skills: Jev pre-screens which procedures this task needs — matched
+  // skills are injected in FULL (no tool call needed); the rest stay as
+  // a one-line index the bot can open via itask__use_skill. Without Jev
+  // everything stays index-only.
+  const skillRows = getSkillRows(userId);
+  if (skillRows.length) {
+    const pickedIds =
+      lastUserMsg && !opts?.preview
+        ? await jevPickSkills(userId, lastUserMsg, skillRows)
+        : null;
+    const picked = skillRows.filter((s) => pickedIds?.includes(s.id));
+    const rest = skillRows.filter((s) => !pickedIds?.includes(s.id));
+    let text = "";
+    if (picked.length) {
+      text +=
+        "\n\n## Active skills — follow these verified steps exactly\n" +
+        picked.map((s) => `### ${s.name}\n${s.content}`).join("\n\n");
+    }
+    if (rest.length) {
+      text +=
+        "\n\n## Skills (learned procedures — loaded on demand)\n" +
+        rest
+          .map(
+            (s) =>
+              `- #${s.id} ${s.name}${s.description ? ` — ${s.description}` : ""}`
+          )
+          .join("\n") +
+        `\nWhen a task matches a skill above, FIRST call ` +
+        `itask__use_skill with its id to load the exact steps.`;
+    }
+    addPart(config, "skills", "Skills", text);
   }
   const builtin = getBuiltinTools(userId, bot.id, roomId, collabDepth);
   // Preview builds the prompt only — skip connecting to MCP servers.
@@ -835,6 +869,46 @@ async function jevRouteBots(
       (b) => `${b.name}=${(answers[`bot_${b.id}`]?.noul ?? 0).toFixed(2)}`
     ).join(", ")
   );
+  return picked;
+}
+
+/**
+ * Jev skill picker: given the trigger text and the skills index, Jev
+ * marks which procedures this task needs. Matching skills get their
+ * full content injected straight into the prompt — saving both the
+ * itask__use_skill tool roundtrip and the model's match reasoning.
+ * Returns null when Jev isn't configured/failed → index-only fallback.
+ */
+async function jevPickSkills(
+  userId: number,
+  text: string,
+  skills: ReturnType<typeof getSkillRows>
+): Promise<number[] | null> {
+  if (!resolveJevKey(userId) || !skills.length) return null;
+  const state =
+    `Incoming task/message: "${text.slice(0, 2000)}"\n\n` +
+    "Available learned procedures:\n" +
+    skills
+      .map((s) => `#${s.id} ${s.name}${s.description ? ` — ${s.description}` : ""}`)
+      .join("\n");
+  const questions = Object.fromEntries(
+    skills.map((s) => [
+      `skill_${s.id}`,
+      {
+        type: "noul" as const,
+        instructions:
+          `This task matches or needs procedure "${s.name}"` +
+          `${s.description ? ` (${s.description})` : ""} — the bot ` +
+          `should load and follow it for this turn`,
+      },
+    ])
+  );
+  const answers = await jevEval(userId, state, questions);
+  if (!answers) return null;
+  const picked = skills
+    .filter((s) => (answers[`skill_${s.id}`]?.noul ?? 0) > 0.5)
+    .map((s) => s.id);
+  if (picked.length) console.log("[jev] skills picked:", picked.join(", "));
   return picked;
 }
 
