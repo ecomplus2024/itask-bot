@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/lib/i18n";
-import { Minus, Square, X } from "lucide-react";
+import { ChevronLeft, Minus, Square, X } from "lucide-react";
 import Composer from "./Composer";
 import RoomMessageList, { RoomMsg } from "./RoomMessageList";
 import BotAvatar from "./BotAvatar";
@@ -131,6 +131,8 @@ export default function ChatApp({
   useEffect(() => {
     if (autoOpened.current || activeRoom || rooms.length === 0) return;
     autoOpened.current = true;
+    // On mobile the list IS the home screen — don't jump into a chat.
+    if (window.innerWidth < 768) return;
     openRoom(rooms.find((r) => r.kind !== "bot_dm") ?? rooms[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rooms, activeRoom]);
@@ -402,7 +404,11 @@ export default function ChatApp({
           </div>
         )}
       </div>
-      <aside className="w-64 shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+      <aside
+        className={`${
+          activeRoom ? "hidden md:flex" : "flex"
+        } w-full md:w-64 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50`}
+      >
           {/* Bots */}
           <div className="p-3 pb-1 flex items-center justify-between">
             <p className="text-xs font-semibold uppercase text-zinc-500">
@@ -669,7 +675,11 @@ export default function ChatApp({
           </div>
         </aside>
 
-      <main className="relative flex-1 flex flex-col min-w-0">
+      <main
+        className={`${
+          activeRoom ? "flex" : "hidden md:flex"
+        } relative flex-1 flex-col min-w-0`}
+      >
         {!activeRoom ? (
           <div className="flex-1 flex flex-col items-center justify-center px-4 gap-6">
             <div className="text-center space-y-2">
@@ -719,8 +729,15 @@ export default function ChatApp({
           </div>
         ) : (
           <>
-            <div className="absolute top-3 inset-x-0 flex justify-center pointer-events-none z-10">
-              <div className="flex items-center gap-2.5 pl-1.5 pr-4 py-1.5 rounded-full bg-zinc-100/90 dark:bg-zinc-800/80 border border-zinc-200/60 dark:border-zinc-700/60 shadow-sm backdrop-blur-sm">
+            <div className="absolute top-3 inset-x-0 flex justify-center pointer-events-none z-10 px-3">
+              <div className="flex items-center gap-2.5 pl-1.5 pr-4 py-1.5 rounded-full bg-zinc-100/90 dark:bg-zinc-800/80 border border-zinc-200/60 dark:border-zinc-700/60 shadow-sm backdrop-blur-sm pointer-events-auto">
+                <button
+                  onClick={() => setActiveRoom(null)}
+                  className="md:hidden -ml-0.5 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                  aria-label="Back"
+                >
+                  <ChevronLeft size={18} />
+                </button>
                 <div className="flex -space-x-1.5">
                   {activeRoom.bots.map((b) => (
                     <BotAvatar
