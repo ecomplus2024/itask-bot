@@ -408,8 +408,28 @@ async function* runBot(
   hiddenInstruction?: string,
   collabDepth = 0
 ): AsyncGenerator<RoomEvent, string> {
-  const { config, roomName, history, lastUserMsg, builtin, tools, execute } =
-    await prepareBotTurn(bot, roomId, userId, hiddenInstruction, collabDepth);
+  const {
+    config,
+    roomName,
+    isBotDM,
+    history,
+    lastUserMsg,
+    builtin,
+    tools,
+    execute,
+  } = await prepareBotTurn(bot, roomId, userId, hiddenInstruction, collabDepth);
+
+  // Fast acknowledgment: when the request clearly needs processing time
+  // (queries, tools, contacting colleagues), post a natural one-line ack
+  // first — like a real colleague saying "em kiểm tra ngay ạ" — then do
+  // the actual work. Skipped for scheduled/proactive runs and bot DMs.
+  if (!hiddenInstruction && !isBotDM && lastUserMsg) {
+    const ack = await quickAck(bot, config, lastUserMsg);
+    if (ack) {
+      const saved = saveBotMessage(roomId, bot, ack);
+      yield { type: "message", message: saved };
+    }
+  }
 
   let msgs: ChatMessage[] = [...history];
   // A hidden instruction (e.g. a scheduled task) is injected into the
@@ -656,6 +676,46 @@ export async function runBotInstruction(
  */
 // Bot decided it has nothing to add to the group conversation.
 const SILENT_RE = /^\s*\[{1,2}\s*SILENT\s*\]{1,2}/i;
+
+/**
+ * One cheap triage call: decides whether the user request needs real work.
+ * Returns a short natural ack line to post immediately, or null when the
+ * bot can answer right away (greeting, simple question) and no ack is
+ * needed. Never throws — a failed triage just means no ack message.
+ */
+async function quickAck(
+  bot: Bot,
+  config: ReturnType<typeof resolveBotConfig>,
+  userText: string
+): Promise<string | null> {
+  try {
+    const res = await chatOnce(
+      [
+        {
+          role: "user",
+          content:
+            `${bot.name} — a colleague just sent you this chat message:\n` +
+            `"${userText.slice(0, 500)}"\n\n` +
+            `If handling it needs real work or time (data queries, tools, ` +
+            `contacting people, research, analysis, creating files) → reply ` +
+            `with ONE short natural acknowledgment in the same language the ` +
+            `message uses — like a human colleague ("Dạ em kiểm tra ngay ạ"). ` +
+            `Acknowledge only: no answers, no questions, no details.\n` +
+            `If you could answer it right away with no work at all ` +
+            `(greeting, thanks, trivial small talk) → reply with exactly ` +
+            `[[NOW]] and nothing else.`,
+        },
+      ],
+      { ...config, systemPrompt: "You write one-line chat acknowledgments." },
+      []
+    );
+    const t = (res.content ?? "").trim();
+    if (!t || t.includes("[[NOW]]") || SILENT_RE.test(t)) return null;
+    return stripEmoji(t).split("\n")[0].slice(0, 200) || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * AI-based action verification. Instead of pattern-matching keywords, a
