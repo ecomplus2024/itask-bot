@@ -74,8 +74,9 @@ export function botColor(id: number) {
 }
 
 /**
- * Renders a bot avatar: a Lucide icon when `avatar` is "icon:<name>",
- * otherwise the emoji/letter inside a colored circle.
+ * Renders a bot avatar: an image when `avatar` is a URL or /files/N
+ * path, a Lucide icon when "icon:<name>", otherwise the emoji/letter
+ * inside a colored circle.
  */
 export default function BotAvatar({
   avatar,
@@ -92,6 +93,19 @@ export default function BotAvatar({
 }) {
   const iconName = avatar?.startsWith("icon:") ? avatar.slice(5) : null;
   const Icon = iconName ? BOT_ICONS[iconName] : undefined;
+  const isImage = !!avatar && (/^https?:\/\//.test(avatar) || avatar.startsWith("/"));
+  if (isImage) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={avatar}
+        alt={title ?? "bot"}
+        title={title}
+        className={`rounded-full object-cover shrink-0 ${className}`}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
   return (
     <span
       title={title}

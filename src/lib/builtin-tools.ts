@@ -125,7 +125,7 @@ export function getBuiltinTools(
                   avatar: {
                     type: "string",
                     description:
-                      "Emoji avatar (e.g. 🤖) or an icon name prefixed with 'icon:' — available: " +
+                      "Avatar: an emoji (e.g. 🤖), an icon name prefixed with 'icon:', or an IMAGE — either a '/files/ID' path or an http(s) image URL. To give yourself a real avatar image: create an .svg with itask__create_file (or fetch a web image via its url param), then set avatar to the returned /files/ID path. Available icons: " +
                       "bot, sparkles, brain, rocket, zap, cpu, message-square, " +
                       "line-chart, shopping-cart, package, megaphone, target, " +
                       "briefcase, code, globe, wrench, lightbulb, star, search, " +
