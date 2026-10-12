@@ -189,9 +189,12 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `- Use **bold** to highlight the few words/numbers/names that really ` +
     `matter in a reply (key figures, deadlines, warnings) — sparingly, ` +
     `never whole sentences.\n` +
-    `- IMPORTANT: whenever the user shares durable facts (names, dates, deadlines, ` +
-    `preferences, company info, decisions), you MUST call itask__remember BEFORE ` +
-    `replying, so you remember it in future conversations.\n` +
+    `- IMPORTANT: whenever the user shares durable facts RELEVANT TO YOUR ` +
+    `OWN role and work (names, dates, deadlines, preferences, decisions ` +
+    `about YOUR domain), you MUST call itask__remember BEFORE replying. ` +
+    `Do NOT store facts that belong to a colleague's job or that have ` +
+    `nothing to do with you — in group chats, only remember what concerns ` +
+    `YOUR work; other bots remember their own.\n` +
     `- IMPORTANT: whenever the user asks you to do something LATER or ` +
     `PERIODICALLY ("X phút nữa", "sáng mai", "mỗi ngày", "báo cáo lại sau"...), ` +
     `you MUST call itask__schedule_task BEFORE replying — never just promise ` +

@@ -44,7 +44,7 @@ export function getBuiltinTools(
             function: {
               name: "itask__remember",
               description:
-                "Save information to your long-term memory. ALWAYS use this tool (NOT itask__create_skill) to store facts about the user, company or conversation. Kinds: 'core' = durable facts/preferences/deadlines, always loaded into your context — use this by default and keep it short; 'note' = a longer note about a specific topic (project details, procedures, reference material), loaded only when the conversation touches that topic.",
+                "Save information to YOUR long-term memory. ALWAYS use this tool (NOT itask__create_skill) to store facts. SCOPE RULE: only store what is relevant to YOUR OWN role and work — facts about the user directed at you, your domain, your tasks. Do NOT store things that belong to a colleague's job or that don't concern you — their bot remembers its own. Kinds: 'core' = durable facts/preferences/deadlines, always loaded into your context — use this by default and keep it short; 'note' = a longer note about a specific topic (project details, procedures, reference material), loaded only when the conversation touches that topic.",
               parameters: {
                 type: "object",
                 properties: {
@@ -466,11 +466,26 @@ export function getBuiltinTools(
         if (!botId) return "Memory is only available to bots";
         const kind = args.kind === "note" ? "note" : "core";
         const topic = args.topic ? String(args.topic).trim() || null : null;
+        const content = String(args.content ?? "").trim();
+        if (!content) return JSON.stringify({ ok: false, error: "empty" });
+        // Dedupe: bots tend to re-save the same fact every time it comes
+        // up — keep the existing row instead of stacking duplicates.
+        const norm = content.toLowerCase().replace(/\s+/g, " ");
+        const dup = (
+          db
+            .prepare(
+              "SELECT id, content FROM bot_memories WHERE bot_id = ? AND kind = ?"
+            )
+            .all(botId, kind) as { id: number; content: string }[]
+        ).find(
+          (m) => m.content.toLowerCase().replace(/\s+/g, " ") === norm
+        );
+        if (dup) return JSON.stringify({ ok: true, id: dup.id, deduped: true });
         const r = db
           .prepare(
             "INSERT INTO bot_memories (bot_id, kind, topic, content) VALUES (?, ?, ?, ?)"
           )
-          .run(botId, kind, topic, String(args.content ?? "").trim());
+          .run(botId, kind, topic, content);
         return JSON.stringify({ ok: true, id: Number(r.lastInsertRowid) });
       }
       case "itask__list_memories": {
