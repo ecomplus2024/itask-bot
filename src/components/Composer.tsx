@@ -12,6 +12,7 @@ export default function Composer({
   voiceStatus = "off",
   voiceInterim = "",
   voiceError = "",
+  voiceThinking = false,
   onToggleVoice,
 }: {
   onSend: (text: string) => void;
@@ -21,6 +22,7 @@ export default function Composer({
   voiceStatus?: VoiceStatus;
   voiceInterim?: string;
   voiceError?: string;
+  voiceThinking?: boolean;
   onToggleVoice?: () => void;
 }) {
   const { t } = useT();
@@ -70,7 +72,9 @@ export default function Composer({
                 ? "🔊"
                 : voiceStatus === "error"
                   ? voiceError || "…"
-                  : voiceInterim || t("listening")}
+                  : voiceThinking
+                    ? t("thinking")
+                    : voiceInterim || t("listening")}
           </span>
         </div>
       )}

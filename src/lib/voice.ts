@@ -202,45 +202,110 @@ export class VoiceSession {
 
   private audio: HTMLAudioElement | null = null;
   private audioUrl: string | null = null;
+  private speakQueue: string[] = [];
+  private playing = false;
+  private playResolve: (() => void) | null = null;
+  private ttsBuffer = "";
 
-  /** Speak a bot reply — server-side Edge neural vi-VN TTS (works in
-   * Electron, which has no OS/browser Vietnamese voice), falling back
-   * to speechSynthesis when the endpoint is unreachable. */
-  async speak(text: string) {
+  /** Speak a whole (already-complete) reply. */
+  speak(text: string) {
     if (this.status === "off") return;
-    const clean = text
-      .replace(/\[\[SUGGEST:[^\]]*\]\]/g, "")
+    const clean = this.cleanForSpeech(text);
+    if (clean) this.enqueue(clean);
+  }
+
+  /** Feed streaming deltas — sentences are spoken as soon as they are
+   * complete, so the bot starts talking while it is still writing. */
+  speakStream(delta: string) {
+    if (this.status === "off") return;
+    this.ttsBuffer += delta;
+    this.pumpSentences(false);
+  }
+
+  /** Call when the stream ends — speaks whatever is left in the buffer. */
+  speakFlush() {
+    this.pumpSentences(true);
+  }
+
+  private pumpSentences(flush: boolean) {
+    while (true) {
+      // Drop completed control markers (e.g. [[SUGGEST: ...]]).
+      this.ttsBuffer = this.ttsBuffer.replace(/\[\[[^\]]*\]\]/g, "");
+      // Don't cut inside an incomplete marker — wait for "]]" first.
+      const open = this.ttsBuffer.indexOf("[[");
+      const limit = open === -1 ? this.ttsBuffer.length : open;
+      if (limit === 0) return;
+      const buf = this.ttsBuffer.slice(0, limit);
+      const m = /[.!?…\n]/.exec(buf);
+      if (m && m.index >= 3) {
+        const sentence = this.cleanForSpeech(buf.slice(0, m.index + 1));
+        this.ttsBuffer = this.ttsBuffer.slice(m.index + 1);
+        if (sentence) this.enqueue(sentence);
+        continue;
+      }
+      if (flush) {
+        const rest = this.cleanForSpeech(buf);
+        this.ttsBuffer = this.ttsBuffer.slice(limit);
+        if (rest) this.enqueue(rest);
+        continue;
+      }
+      return;
+    }
+  }
+
+  private cleanForSpeech(text: string) {
+    return text
+      .replace(/\[\[[^\]]*\]\]/g, "")
       .replace(/\[[^\]]*\]\([^)]*\)/g, "") // markdown links
-      .replace(/[#*`>_-]/g, "")
+      .replace(/[#*`>_]/g, "")
       .replace(/\s+/g, " ")
       .trim();
-    if (!clean) return;
-    this.cancelSpeech();
+  }
 
+  private enqueue(sentence: string) {
+    this.speakQueue.push(sentence);
+    void this.pumpQueue();
+  }
+
+  private async pumpQueue() {
+    if (this.playing) return;
+    const text = this.speakQueue.shift();
+    if (text === undefined) {
+      if (this.status === "speaking") this.setStatus("listening");
+      return;
+    }
+    this.playing = true;
     try {
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: clean }),
+        body: JSON.stringify({ text }),
       });
       if (!res.ok) throw new Error("tts_failed");
       const url = URL.createObjectURL(await res.blob());
       const audio = new Audio(url);
       this.audio = audio;
       this.audioUrl = url;
-      audio.onplay = () => {
-        if (this.status !== "off") this.setStatus("speaking");
-      };
-      audio.onended = audio.onerror = () => this.releaseAudio();
-      // Voice may have been stopped while the fetch was in flight.
       if ((this.status as VoiceStatus) === "off") {
         this.releaseAudio();
         return;
       }
-      await audio.play();
+      this.setStatus("speaking");
+      await new Promise<void>((resolve) => {
+        this.playResolve = () => {
+          this.playResolve = null;
+          resolve();
+        };
+        audio.onended = audio.onerror = this.playResolve;
+        audio.play().catch(() => this.playResolve?.());
+      });
+      this.releaseAudio();
     } catch {
       this.releaseAudio();
-      this.speakFallback(clean);
+      this.speakFallback(text);
+    } finally {
+      this.playing = false;
+      if (this.status !== "off") void this.pumpQueue();
     }
   }
 
@@ -249,7 +314,8 @@ export class VoiceSession {
     this.audio = null;
     if (this.audioUrl) URL.revokeObjectURL(this.audioUrl);
     this.audioUrl = null;
-    if (this.status === "speaking") this.setStatus("listening");
+    if (this.status === "speaking" && !this.playing)
+      this.setStatus("listening");
   }
 
   private speakFallback(clean: string) {
@@ -272,6 +338,9 @@ export class VoiceSession {
   }
 
   cancelSpeech() {
+    this.speakQueue = [];
+    this.ttsBuffer = "";
+    this.playResolve?.(); // unblock an in-flight pumpQueue await
     if (this.audio) {
       this.audio.pause();
       if (this.audioUrl) URL.revokeObjectURL(this.audioUrl);

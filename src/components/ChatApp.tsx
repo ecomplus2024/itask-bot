@@ -217,6 +217,8 @@ export default function ChatApp({
   streamingRef.current = streaming;
 
   const pendingVoice = useRef<string[]>([]);
+  const voiceFedRef = useRef(false);
+  const spokenKeyRef = useRef<string | number | null>(null);
 
   function toggleVoice() {
     if (voiceRef.current) {
@@ -226,6 +228,9 @@ export default function ChatApp({
       return;
     }
     setVoiceError("");
+    // Don't speak history that already exists when turning voice on.
+    const last = messages[messages.length - 1];
+    if (last) spokenKeyRef.current = last.id ?? last.content;
     const session = new VoiceSession({
       onStatus: setVoiceStatus,
       onInterim: setVoiceInterim,
@@ -251,17 +256,18 @@ export default function ChatApp({
     };
   }, [activeRoom?.id]);
 
-  // Speak the bot's reply once streaming settles and the last message
-  // is a finished bot message — then send anything the user said while
-  // the bot was talking.
+  // Voice playback: deltas were already spoken sentence-by-sentence
+  // during streaming — flush the buffer's tail when it ends and mark
+  // the message spoken so the messages-effect doesn't repeat it.
   const prevStreaming = useRef(false);
   useEffect(() => {
     const wasStreaming = prevStreaming.current;
     prevStreaming.current = streaming;
     if (!wasStreaming || streaming) return;
     const last = messages[messages.length - 1];
-    if (voiceRef.current && last?.kind === "bot" && !last.streaming) {
-      voiceRef.current.speak(last.content);
+    if (voiceRef.current && voiceFedRef.current) {
+      voiceRef.current.speakFlush();
+      if (last) spokenKeyRef.current = last.id ?? last.content;
     }
     if (pendingVoice.current.length) {
       const text = pendingVoice.current.join(" ").trim();
@@ -269,6 +275,18 @@ export default function ChatApp({
       if (text) sendRef.current(text);
     }
   }, [streaming, messages]);
+
+  // Bot messages that arrive outside streaming (scheduled tasks,
+  // proactive runs, another bot's DM) still get spoken while voice is on.
+  useEffect(() => {
+    if (!voiceRef.current || streaming) return;
+    const last = messages[messages.length - 1];
+    if (last?.kind !== "bot" || last.streaming) return;
+    const key = last.id ?? last.content;
+    if (spokenKeyRef.current === key) return;
+    spokenKeyRef.current = key;
+    voiceRef.current.speak(last.content);
+  }, [messages, streaming, voiceStatus]);
 
   function openNewRoom() {
     setRoomName("");
@@ -320,6 +338,7 @@ export default function ChatApp({
   async function send(text: string, room = activeRoom) {
     if (streaming || !text.trim() || !room) return;
     setStreaming(true);
+    voiceFedRef.current = false;
     abortRef.current = new AbortController();
 
     try {
@@ -364,6 +383,9 @@ export default function ChatApp({
               return [...ms, { ...m, avatar: bot?.avatar }];
             });
           } else if (e.type === "bot_start") {
+            // A new bot turn begins — flush the previous speaker's
+            // sentence buffer so its tail isn't held back.
+            voiceRef.current?.speakFlush();
             setMessages((ms) => [
               ...ms,
               {
@@ -384,6 +406,8 @@ export default function ChatApp({
               return ms;
             });
           } else if (e.type === "delta") {
+            voiceFedRef.current = true;
+            voiceRef.current?.speakStream(e.text);
             setMessages((ms) => {
               const copy = [...ms];
               const last = copy[copy.length - 1];
@@ -848,6 +872,7 @@ export default function ChatApp({
                 placeholder={`${t("messageTo")} ${activeRoom.name}`}
                 voiceStatus={voiceStatus}
                 voiceInterim={voiceInterim}
+                voiceThinking={streaming}
                 voiceError={
                   voiceError
                     ? t(
