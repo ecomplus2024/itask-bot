@@ -98,7 +98,8 @@ export default function BotAvatar({
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={avatar}
+        // /files/N is the preview PAGE — raw bytes live at /api/files/N
+        src={avatar.replace(/^\/files\/(\d+)/, "/api/files/$1")}
         alt={title ?? "bot"}
         title={title}
         className={`rounded-full object-cover shrink-0 ${className}`}

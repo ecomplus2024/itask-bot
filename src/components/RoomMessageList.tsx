@@ -38,6 +38,10 @@ export type RoomMsg = {
   created_at?: string;
 };
 
+// /files/N is the preview PAGE route — image bytes live at /api/files/N.
+const fileSrc = (u: string) =>
+  u.replace(/^\/files\/(\d+)(?:\?.*)?$/, "/api/files/$1");
+
 function fmtTime(s?: string) {
   if (!s) return "";
   const d = new Date(s.replace(" ", "T") + "Z");
@@ -154,20 +158,18 @@ export default function RoomMessageList({
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
-                            img: ({ src, alt }) => (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={typeof src === "string" ? src : ""}
-                                alt={alt ?? "image"}
-                                className="max-w-full max-h-72 rounded-lg border border-zinc-200 dark:border-zinc-700 my-1 cursor-zoom-in object-contain bg-white"
-                                onClick={() =>
-                                  window.open(
-                                    typeof src === "string" ? src : "",
-                                    "_blank"
-                                  )
-                                }
-                              />
-                            ),
+                            img: ({ src, alt }) => {
+                              const s = typeof src === "string" ? fileSrc(src) : "";
+                              return (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={s}
+                                  alt={alt ?? "image"}
+                                  className="max-w-full max-h-72 rounded-lg border border-zinc-200 dark:border-zinc-700 my-1 cursor-zoom-in object-contain bg-white"
+                                  onClick={() => window.open(s, "_blank")}
+                                />
+                              );
+                            },
                             a: ({ href, children }) => {
                               const label = String(children ?? "file");
                               const imgExt = /\.(png|jpe?g|gif|webp|svg)(\?.*)?$/i;
@@ -179,7 +181,7 @@ export default function RoomMessageList({
                                   return (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img
-                                      src={href}
+                                      src={fileSrc(href)}
                                       alt={label}
                                       className="max-w-full max-h-72 rounded-lg border border-zinc-200 dark:border-zinc-700 my-1 cursor-zoom-in object-contain bg-white"
                                       onClick={() => setPreviewFileId(fid)}
