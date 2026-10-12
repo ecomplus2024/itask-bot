@@ -455,13 +455,32 @@ export default function ChatApp({
             setMessages((ms) => {
               const copy = [...ms];
               const last = copy[copy.length - 1];
-              if (last?.kind === "bot" && last.sender_id === e.botId) {
+              if (
+                last?.kind === "bot" &&
+                last.sender_id === e.botId &&
+                last.streaming
+              ) {
                 copy[copy.length - 1] = {
                   ...last,
                   content: last.content + e.text,
                 };
+                return copy;
               }
-              return copy;
+              // No open streaming bubble for this bot (e.g. an ack
+              // message just landed) — start a new one instead of
+              // appending into a saved message.
+              const b = room.bots.find((x) => x.id === e.botId);
+              return [
+                ...ms,
+                {
+                  kind: "bot",
+                  sender_id: e.botId,
+                  sender_name: b?.name ?? "",
+                  avatar: b?.avatar,
+                  content: e.text,
+                  streaming: true,
+                },
+              ];
             });
           }
         }

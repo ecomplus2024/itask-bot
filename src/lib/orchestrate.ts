@@ -424,6 +424,13 @@ async function* runBot(
     if (ack) {
       const saved = saveBotMessage(roomId, bot, ack);
       yield { type: "message", message: saved };
+      // Re-open a fresh streaming placeholder — otherwise the real
+      // reply's deltas would append INTO the ack bubble and the final
+      // message event would then show the reply a second time.
+      yield {
+        type: "bot_start",
+        bot: { id: bot.id, name: bot.name, avatar: bot.avatar },
+      };
     }
   }
 
