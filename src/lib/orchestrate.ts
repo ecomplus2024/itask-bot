@@ -227,7 +227,7 @@ export async function prepareBotTurn(
   userId: number,
   hiddenInstruction?: string,
   collabDepth = 0,
-  opts?: { preview?: boolean }
+  opts?: { preview?: boolean; ephemeralHistory?: ChatMessage[] }
 ): Promise<PreparedTurn> {
   const config = resolveBotConfig(bot);
 
@@ -377,7 +377,10 @@ export async function prepareBotTurn(
   ) {
     await compactRoom(roomId, bot.id, config);
   }
-  const history = loadRoomContextMessages(roomId, bot.id);
+  const history = [
+    ...loadRoomContextMessages(roomId, bot.id),
+    ...(opts?.ephemeralHistory ?? []),
+  ];
 
   // Knowledge base retrieval (RAG): pull chunks relevant to the
   // latest user message (or the scheduled instruction) into the
@@ -488,7 +491,8 @@ async function* runBot(
   userId: number,
   allowSilent = true,
   hiddenInstruction?: string,
-  collabDepth = 0
+  collabDepth = 0,
+  opts?: { ephemeral?: boolean; ephemeralHistory?: ChatMessage[] }
 ): AsyncGenerator<RoomEvent, string> {
   const {
     config,
@@ -499,7 +503,14 @@ async function* runBot(
     builtin,
     tools,
     execute,
-  } = await prepareBotTurn(bot, roomId, userId, hiddenInstruction, collabDepth);
+  } = await prepareBotTurn(
+    bot,
+    roomId,
+    userId,
+    hiddenInstruction,
+    collabDepth,
+    opts
+  );
 
   // Fast acknowledgment: when the request clearly needs processing time
   // (queries, tools, contacting colleagues), post a natural one-line ack
@@ -509,7 +520,7 @@ async function* runBot(
   // Skipped for scheduled/proactive runs and bot DMs.
   // When Jev is configured it makes the needs-work decision (fast typed
   // answer); without Jev, quickAck's own LLM call decides.
-  if (!hiddenInstruction && !isBotDM && !allowSilent && lastUserMsg) {
+  if (!hiddenInstruction && !isBotDM && !allowSilent && lastUserMsg && !opts?.ephemeral) {
     const needsWork = await jevNeedsWork(userId, lastUserMsg);
     const ack =
       needsWork === false
@@ -732,15 +743,21 @@ async function* runBot(
 
   if (SILENT_RE.test(text)) return text;
 
-  // Persist BEFORE streaming deltas so a client disconnect can never
-  // lose a completed reply.
-  const saved = saveBotMessage(roomId, bot, text);
-
-  // Emit in slices for a streaming feel
-  for (let i = 0; i < text.length; i += 24) {
-    yield { type: "delta", botId: bot.id, text: text.slice(i, i + 24) };
+  // Ephemeral turns (voice calls): stream the reply out but persist
+  // nothing — a call leaves no chat bubbles.
+  if (!opts?.ephemeral) {
+    // Persist BEFORE streaming deltas so a client disconnect can never
+    // lose a completed reply.
+    const saved = saveBotMessage(roomId, bot, text);
+    for (let i = 0; i < text.length; i += 24) {
+      yield { type: "delta", botId: bot.id, text: text.slice(i, i + 24) };
+    }
+    yield { type: "message", message: saved };
+  } else {
+    for (let i = 0; i < text.length; i += 24) {
+      yield { type: "delta", botId: bot.id, text: text.slice(i, i + 24) };
+    }
   }
-  yield { type: "message", message: saved };
   return text;
 }
 
@@ -782,6 +799,31 @@ export async function runBotInstruction(
   } finally {
     unmarkBotRunning(bot.id);
   }
+}
+
+/**
+ * One bot turn for a live voice call: runs the full tool-capable
+ * pipeline but persists nothing — the caller keeps the transcript in
+ * the ephemeral voice buffer and passes it back as ephemeralHistory.
+ */
+export function runVoiceTurn(
+  bot: Bot,
+  roomId: number,
+  userId: number,
+  ephemeralHistory: ChatMessage[]
+): AsyncGenerator<RoomEvent, string> {
+  markBotRunning(bot.id);
+  const gen = runBot(bot, roomId, userId, false, undefined, 0, {
+    ephemeral: true,
+    ephemeralHistory,
+  });
+  return (async function* () {
+    try {
+      return yield* gen;
+    } finally {
+      unmarkBotRunning(bot.id);
+    }
+  })();
 }
 
 /**

@@ -217,10 +217,11 @@ export default function ChatApp({
     return () => clearInterval(iv);
   }, [activeRoom, streaming, roomThinking, loadMessages]);
 
-  // --- Voice conversation (Deepgram STT + browser TTS) ----------------
-  // Free-speech mode: the session streams mic audio continuously,
-  // Deepgram's endpointing detects turn boundaries, finals are posted
-  // as room messages, bot replies are spoken via speechSynthesis.
+  // --- Voice conversation (Deepgram STT + server TTS) -----------------
+  // Free-speech call mode: mic audio streams continuously, Deepgram's
+  // endpointing detects turn boundaries, finals go to the ephemeral
+  // /api/voice/chat endpoint (nothing is printed to the room), bot
+  // replies stream back and are spoken — back and forth until hangup.
   const sendRef = useRef<(text: string) => void>(() => {});
   sendRef.current = (text) => send(text);
   const streamingRef = useRef(false);
@@ -229,6 +230,71 @@ export default function ChatApp({
   const pendingVoice = useRef<string[]>([]);
   const voiceFedRef = useRef(false);
   const spokenKeyRef = useRef<string | number | null>(null);
+  const voiceBusyRef = useRef(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+
+  // One voice-call turn: the spoken line goes to the ephemeral voice
+  // endpoint — nothing is posted to the room; the reply streams back
+  // and is spoken sentence-by-sentence. Voice utterances captured while
+  // a turn is in flight queue up and run next.
+  async function sendVoice(text: string) {
+    const room = activeRoomRef.current;
+    const session = voiceRef.current;
+    if (!room || !(session instanceof VoiceSession) || voiceBusyRef.current)
+      return;
+    voiceBusyRef.current = true;
+    setVoiceBusy(true);
+    try {
+      const res = await fetch("/api/voice/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: room.id,
+          text,
+          botId: room.direct_bot_id ?? room.bots[0]?.id,
+        }),
+      });
+      if (res.ok && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const e = JSON.parse(line);
+              if (e.type === "delta") {
+                setVoiceInterim("");
+                session.speakStream(e.text);
+              } else if (e.type === "status") {
+                // Tool narration — shown in the voice pill, not spoken.
+                setVoiceInterim(`${e.text}…`);
+              }
+            } catch {
+              // ignore malformed lines
+            }
+          }
+        }
+        session.speakFlush();
+        setVoiceInterim("");
+      }
+    } catch {
+      // network error — the call keeps listening
+    } finally {
+      voiceBusyRef.current = false;
+      setVoiceBusy(false);
+      if (pendingVoice.current.length) {
+        const queued = pendingVoice.current.join(" ").trim();
+        pendingVoice.current = [];
+        if (queued) void sendVoice(queued);
+      }
+    }
+  }
 
   async function toggleVoice() {
     if (voiceRef.current) {
@@ -273,11 +339,11 @@ export default function ChatApp({
       // Queue while a bot reply is streaming so spoken turns aren't
       // dropped; otherwise play a filler ack instantly, then send.
       onFinal: (text) => {
-        if (streamingRef.current) {
+        if (streamingRef.current || voiceBusyRef.current) {
           pendingVoice.current.push(text);
         } else {
           session.filler();
-          sendRef.current(text);
+          void sendVoice(text);
         }
       },
       onError: (code) => {
@@ -313,7 +379,9 @@ export default function ChatApp({
     if (pendingVoice.current.length) {
       const text = pendingVoice.current.join(" ").trim();
       pendingVoice.current = [];
-      if (text) sendRef.current(text);
+      if (text)
+        if (voiceRef.current instanceof VoiceSession) void sendVoice(text);
+        else sendRef.current(text);
     }
   }, [streaming, messages]);
 
@@ -1190,7 +1258,7 @@ export default function ChatApp({
                 placeholder={`${t("messageTo")} ${activeRoom.name}`}
                 voiceStatus={voiceStatus}
                 voiceInterim={voiceInterim}
-                voiceThinking={streaming}
+                voiceThinking={streaming || voiceBusy}
                 voiceError={
                   voiceError
                     ? t(

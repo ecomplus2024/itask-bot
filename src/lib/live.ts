@@ -5,8 +5,9 @@
 // audio never touches our server. The model streams native vi-VN
 // speech back; tool calls are routed to /api/live/tools so the real
 // iTask stack (memory, files, ERP/MCP, ask_bot) still executes.
-// Transcripts are saved to the room via /api/live/transcript so the
-// voice conversation lives in normal chat history.
+// Nothing is persisted — a call leaves no chat bubbles; session
+// resumption keeps the conversation alive past Google's ~10-minute
+// connection cap.
 
 import {
   startMicCapture,
@@ -40,8 +41,10 @@ export class LiveSession {
   private roomId: number;
   private resumeHandle: string | null = null;
   private inputText = "";
-  private outputText = "";
   private stopped = false;
+  private reconnects = 0;
+  private ctx: { systemInstruction?: string; tools?: unknown[] } | null =
+    null;
 
   constructor(roomId: number, events: LiveEvents) {
     this.roomId = roomId;
@@ -72,6 +75,9 @@ export class LiveSession {
     if (!tokRes.ok || !ctx?.available)
       return this.fail(ctx?.reason ?? "live_unavailable");
     const { token } = (await tokRes.json()) as { token: string };
+    this.ctx = ctx;
+    this.resumeHandle = null;
+    this.stopped = false;
 
     // 2) Mic — same PCM16 16kHz capture as the Deepgram path.
     try {
@@ -98,10 +104,18 @@ export class LiveSession {
     }
 
     // 3) Connect straight to Google.
-    this.ws = new WebSocket(`${WS_URL}?access_token=${token}`);
-    this.ws.onmessage = (e) => this.onMessage(e.data);
-    this.ws.onopen = () => {
-      this.ws?.send(
+    this.connect(token);
+  }
+
+  /** Opens (or re-opens) the Google socket and sends the setup frame.
+   * On reconnect the stored resumption handle restores the session's
+   * context so the conversation keeps flowing seamlessly. */
+  private connect(token: string) {
+    const ws = new WebSocket(`${WS_URL}?access_token=${token}`);
+    this.ws = ws;
+    ws.onmessage = (e) => this.onMessage(e.data);
+    ws.onopen = () => {
+      ws.send(
         JSON.stringify({
           setup: {
             model: `models/${LIVE_MODEL}`,
@@ -115,12 +129,14 @@ export class LiveSession {
               },
             },
             systemInstruction: {
-              parts: [{ text: ctx.systemInstruction ?? "" }],
+              parts: [{ text: this.ctx?.systemInstruction ?? "" }],
             },
-            tools: ctx.tools ?? [],
+            tools: this.ctx?.tools ?? [],
             inputAudioTranscription: {},
             outputAudioTranscription: {},
-            sessionResumption: {},
+            sessionResumption: this.resumeHandle
+              ? { handle: this.resumeHandle }
+              : {},
             contextWindowCompression: {
               triggerTokens: 100000,
               slidingWindow: { targetTokens: 80000 },
@@ -129,26 +145,28 @@ export class LiveSession {
         })
       );
     };
-    this.ws.onclose = () => {
-      if (this.status !== "off" && this.status !== "error" && !this.resumeHandle)
-        this.fail("live_closed");
-      else if (!this.stopped && this.resumeHandle) this.reconnect();
+    ws.onclose = () => {
+      // Any unexpected drop mid-call → try to resume with a fresh token.
+      if (!this.stopped && this.status !== "off" && this.status !== "error")
+        void this.reconnect();
     };
-    this.ws.onerror = () => {
-      if (this.status === "connecting") this.fail("live_error");
+    ws.onerror = () => {
+      if (this.status === "connecting" && !this.resumeHandle)
+        this.fail("live_error");
     };
   }
 
-  private reconnect() {
-    // Session resumption: reconnect with the stored handle so context
-    // survives Google's ~10-minute connection cap.
+  private async reconnect() {
+    if (this.stopped || ++this.reconnects > 3) return this.fail("live_closed");
     this.setStatus("connecting");
-    const token = null; // resumption uses handle, not a new token
-    void token;
-    void this.resumeHandle;
-    // For PoC simplicity: a full restart would need a fresh token —
-    // keep the handle and reconnect once implementation matures.
-    this.fail("live_closed");
+    try {
+      const res = await fetch("/api/live/token", { method: "POST" });
+      if (!res.ok) throw new Error("token_failed");
+      const { token } = (await res.json()) as { token: string };
+      this.connect(token);
+    } catch {
+      this.fail("live_closed");
+    }
   }
 
   private async onMessage(data: string | Blob) {
@@ -174,6 +192,7 @@ export class LiveSession {
     }
 
     if (m.setupComplete) {
+      this.reconnects = 0;
       this.setStatus("listening");
       return;
     }
@@ -198,7 +217,6 @@ export class LiveSession {
         this.ev.onInterim(this.inputText);
       }
       if (sc.outputTranscription?.text) {
-        this.outputText += sc.outputTranscription.text;
         this.setStatus("speaking");
       }
       const parts = sc.modelTurn?.parts ?? [];
@@ -206,13 +224,8 @@ export class LiveSession {
         if (p.inlineData?.data) this.playChunk(p.inlineData.data);
       }
       if (sc.turnComplete) {
-        const input = this.inputText.trim();
-        const output = this.outputText.trim();
         this.inputText = "";
-        this.outputText = "";
         this.ev.onInterim("");
-        if (input) void this.log("user", input);
-        if (output) void this.log("bot", output);
         if (this.status === "speaking") this.setStatus("listening");
       }
       return;
@@ -268,14 +281,6 @@ export class LiveSession {
     this.playCtx?.close().catch(() => {});
     this.playCtx = null;
     this.nextPlay = 0;
-  }
-
-  private async log(kind: "user" | "bot", text: string) {
-    await fetch("/api/live/transcript", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ roomId: this.roomId, kind, content: text }),
-    }).catch(() => {});
   }
 
   private fail(code: string) {
