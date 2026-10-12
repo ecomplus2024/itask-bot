@@ -12,7 +12,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     .prepare(
       `SELECT m.id, m.kind, m.topic, m.content, m.created_at FROM bot_memories m
        JOIN bots b ON b.id = m.bot_id
-       WHERE m.bot_id = ? AND b.user_id = ? ORDER BY m.id DESC`
+       WHERE m.bot_id = ? AND b.user_id = ? ORDER BY m.id DESC LIMIT 500`
     )
     .all(Number(id), user.id);
   return NextResponse.json({ memories });

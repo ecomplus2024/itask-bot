@@ -437,7 +437,7 @@ export default function BotDialog({
                     </button>
                   </div>
                 ))}
-                {memories.length > 0 && (
+                {memories.some((m) => m.kind !== "log") && (
                   <button
                     onClick={clearMemories}
                     className="text-xs text-red-500 hover:underline"
@@ -487,6 +487,15 @@ export default function BotDialog({
                         {t("room")} #{promptInfo.room_id}
                       </span>
                     )}
+                    <button
+                      onClick={() => {
+                        setPromptInfo(null);
+                      }}
+                      className="ml-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                      title="Refresh"
+                    >
+                      ⟳
+                    </button>
                   </p>
                   {promptLoading && (
                     <p className="text-sm text-zinc-500 py-4 text-center">…</p>
