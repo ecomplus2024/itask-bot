@@ -50,9 +50,59 @@ export type RoomMessage = {
 export type RoomEvent =
   | { type: "bot_start"; bot: { id: number; name: string; avatar: string } }
   | { type: "bot_silent"; botId: number }
+  | { type: "status"; botId: number; text: string }
   | { type: "delta"; botId: number; text: string }
   | { type: "message"; message: RoomMessage }
   | { type: "done" };
+
+// Human-readable narration of a tool call — shown in place of the
+// generic typing dots so the user sees what the bot is actually doing
+// ("đang hỏi Mai Anh", "đang truy vấn web…").
+function describeToolCall(name: string, args: Record<string, unknown>): string {
+  const q = String(args.query ?? "").slice(0, 60);
+  switch (name) {
+    case "itask__remember":
+      return "Đang ghi nhớ";
+    case "itask__list_memories":
+      return "Đang xem lại bộ nhớ";
+    case "itask__forget":
+      return "Đang cập nhật bộ nhớ";
+    case "itask__search_history":
+      return `Đang tra lại lịch sử trò chuyện${q ? ` — “${q}”` : ""}`;
+    case "itask__create_skill":
+      return "Đang tạo kỹ năng mới";
+    case "itask__update_profile":
+      return "Đang cập nhật hồ sơ";
+    case "itask__schedule_task":
+      return "Đang đặt lịch công việc";
+    case "itask__list_tasks":
+      return "Đang xem lịch công việc";
+    case "itask__update_task":
+    case "itask__cancel_task":
+      return "Đang chỉnh lịch công việc";
+    case "itask__ask_bot":
+      return `Đang hỏi ${String(args.bot ?? "đồng nghiệp")}`;
+    case "itask__send_room_message": {
+      const rid = Number(args.room_id);
+      const r = rid
+        ? (db
+            .prepare("SELECT name FROM rooms WHERE id = ?")
+            .get(rid) as { name: string | null } | undefined)
+        : undefined;
+      return `Đang chuyển việc vào “${r?.name ?? `phòng ${rid}`}”`;
+    }
+    case "itask__create_file":
+      return "Đang tạo file";
+    case "itask__web_search":
+      return `Đang tìm kiếm web${q ? ` — “${q}”` : ""}`;
+    case "itask__fetch_url":
+      return "Đang đọc trang web";
+    default:
+      return name.startsWith("itask__")
+        ? "Đang xử lý"
+        : `Đang dùng công cụ ${name.replace(/_/g, " ")}`;
+  }
+}
 
 export function loadRoomMessages(
   roomId: number,
@@ -448,7 +498,9 @@ async function* runBot(
   let overflowRetried = false;
   const calledTools = new Set<string>();
 
-  async function runRounds(maxRounds: number): Promise<string | null> {
+  async function* runRounds(
+    maxRounds: number
+  ): AsyncGenerator<RoomEvent, string | null> {
     for (let round = 0; round < maxRounds; round++) {
       pruneOldToolResults(msgs);
       let msg: ChatMessage;
@@ -476,6 +528,11 @@ async function* runBot(
         }
         calledTools.add(tc.function.name);
         console.log(`[runBot] ${bot.name} → ${tc.function.name}`);
+        yield {
+          type: "status",
+          botId: bot.id,
+          text: describeToolCall(tc.function.name, args),
+        };
         const result = await execute(tc.function.name, args);
         msgs.push({
           role: "tool",
@@ -487,8 +544,20 @@ async function* runBot(
     return null;
   }
 
+  // runRounds is a generator so mid-turn status events stream out in
+  // real time — drain it, re-yielding events, keeping the return value.
+  const drain = async function* (
+    g: AsyncGenerator<RoomEvent, string | null>
+  ): AsyncGenerator<RoomEvent, string | null> {
+    while (true) {
+      const { value, done } = await g.next();
+      if (done) return value;
+      yield value;
+    }
+  };
+
   try {
-    answer = await runRounds(12);
+    answer = yield* drain(runRounds(12));
 
     // Ran out of tool-call rounds without a final answer — force a
     // plain-text wrap-up instead of posting an empty "…" reply.
@@ -545,7 +614,7 @@ async function* runBot(
             "confirm briefly (confirmation only, no data/result dump):\n- " +
             missing.join("\n- "),
         });
-        const retry = await runRounds(4);
+        const retry = yield* drain(runRounds(4));
         if (retry) answer = retry;
       }
     }

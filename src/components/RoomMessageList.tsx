@@ -33,6 +33,8 @@ export type RoomMsg = {
   avatar?: string;
   content: string;
   streaming?: boolean;
+  /** What the bot is doing right now (tool narration) — replaces dots. */
+  activity?: string;
   created_at?: string;
 };
 
@@ -143,6 +145,11 @@ export default function RoomMessageList({
                     m.content
                   ) : (
                     <>
+                      {m.streaming && m.activity && (
+                        <p className="text-xs italic text-zinc-400 mb-1">
+                          {m.activity}…
+                        </p>
+                      )}
                       {parsed.text ? (
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
@@ -187,7 +194,7 @@ export default function RoomMessageList({
                         >
                           {parsed.text}
                         </ReactMarkdown>
-                      ) : m.streaming ? (
+                      ) : m.streaming && !m.activity ? (
                         <TypingDots />
                       ) : null}
                       {m.streaming && m.content && isLast && (

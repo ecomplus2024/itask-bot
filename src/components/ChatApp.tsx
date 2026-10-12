@@ -440,6 +440,36 @@ export default function ChatApp({
                 streaming: true,
               },
             ]);
+          } else if (e.type === "status") {
+            // Tool narration: pin the activity onto the bot's open
+            // streaming bubble (create one if the turn just began).
+            setMessages((ms) => {
+              const copy = [...ms];
+              for (let i = copy.length - 1; i >= 0; i--) {
+                const m = copy[i];
+                if (
+                  m.kind === "bot" &&
+                  m.sender_id === e.botId &&
+                  m.streaming
+                ) {
+                  copy[i] = { ...m, activity: e.text };
+                  return copy;
+                }
+              }
+              const b = room.bots.find((x) => x.id === e.botId);
+              return [
+                ...ms,
+                {
+                  kind: "bot",
+                  sender_id: e.botId,
+                  sender_name: b?.name ?? "",
+                  avatar: b?.avatar,
+                  content: "",
+                  streaming: true,
+                  activity: e.text,
+                },
+              ];
+            });
           } else if (e.type === "bot_silent") {
             setMessages((ms) => {
               const last = ms[ms.length - 1];
