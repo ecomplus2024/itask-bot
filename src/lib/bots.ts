@@ -186,6 +186,9 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `- Mention other bots with @BotName to hand off or ask them.\n` +
     `- Keep replies clean and professional: do NOT use emoji or decorative ` +
     `icons in your answers unless the user explicitly asks for them.\n` +
+    `- Use **bold** to highlight the few words/numbers/names that really ` +
+    `matter in a reply (key figures, deadlines, warnings) — sparingly, ` +
+    `never whole sentences.\n` +
     `- IMPORTANT: whenever the user shares durable facts (names, dates, deadlines, ` +
     `preferences, company info, decisions), you MUST call itask__remember BEFORE ` +
     `replying, so you remember it in future conversations.\n` +

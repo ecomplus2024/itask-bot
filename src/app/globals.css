@@ -60,6 +60,16 @@ body {
   margin: 0.5em 0;
   opacity: 0.85;
 }
+/* Important words the bot emphasises stand out in an accent color */
+.prose-chat strong,
+.prose-chat b {
+  font-weight: 700;
+  color: #047857; /* emerald-700 */
+}
+.dark .prose-chat strong,
+.dark .prose-chat b {
+  color: #34d399; /* emerald-400 */
+}
 
 @keyframes blink {
   0%,

@@ -136,7 +136,7 @@ export default function RoomMessageList({
                   className={
                     isUser
                       ? "rounded-2xl rounded-br-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2.5 whitespace-pre-wrap text-sm"
-                      : "prose-chat text-sm leading-relaxed rounded-2xl rounded-tl-md bg-zinc-100 dark:bg-zinc-800/70 px-4 py-3 max-w-[92%]"
+                      : "prose-chat text-sm leading-relaxed rounded-2xl rounded-tl-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-sm px-4 py-3 max-w-[92%]"
                   }
                 >
                   {isUser ? (
