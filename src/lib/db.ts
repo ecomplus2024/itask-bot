@@ -222,6 +222,14 @@ for (const [col, ddl] of [
   }
 }
 
+// Migrate: Deepgram API key for the voice-chat feature (per-user, env fallback).
+{
+  const cols = db.pragma("table_info(user_settings)") as { name: string }[];
+  if (!cols.some((c) => c.name === "deepgram_api_key")) {
+    db.exec(`ALTER TABLE user_settings ADD COLUMN deepgram_api_key TEXT`);
+  }
+}
+
 // Migrate: rooms.kind — 'bot_dm' marks private bot↔bot channels created by
 // itask__ask_bot. Regular user rooms are 'normal'.
 {

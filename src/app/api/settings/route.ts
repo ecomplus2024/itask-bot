@@ -21,12 +21,14 @@ export async function GET() {
       aiApiKey: mask(s.aiApiKey),
       aiModel: s.aiModel ?? "",
       aiSystemPrompt: s.aiSystemPrompt ?? "",
+      deepgramApiKey: mask(s.deepgramApiKey),
     },
     defaults: {
       aiBaseUrl: env.baseUrl,
       aiModel: env.model,
       aiSystemPrompt: env.systemPrompt,
       hasEnvKey: !!env.apiKey && env.apiKey !== "sk-your-key-here",
+      hasDgKey: !!(s.deepgramApiKey || process.env.DEEPGRAM_API_KEY),
     },
   });
 }
@@ -41,12 +43,15 @@ export async function PUT(req: NextRequest) {
   // Keep existing key if the submitted value is empty or still masked
   let apiKey = body.aiApiKey ?? null;
   if (!apiKey || apiKey.includes("•")) apiKey = current.aiApiKey;
+  let dgKey = body.deepgramApiKey ?? null;
+  if (!dgKey || dgKey.includes("•")) dgKey = current.deepgramApiKey;
 
   saveUserSettings(user.id, {
     aiBaseUrl: body.aiBaseUrl?.trim() || null,
     aiApiKey: apiKey?.trim() || null,
     aiModel: body.aiModel?.trim() || null,
     aiSystemPrompt: body.aiSystemPrompt?.trim() || null,
+    deepgramApiKey: dgKey?.trim() || null,
   });
   return NextResponse.json({ ok: true });
 }

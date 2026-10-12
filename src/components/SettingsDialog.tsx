@@ -10,6 +10,7 @@ type FormState = {
   aiApiKey: string;
   aiModel: string;
   aiSystemPrompt: string;
+  deepgramApiKey: string;
 };
 
 const SECTIONS = ["aiConfig", "skills", "mcp", "update"] as const;
@@ -38,12 +39,14 @@ export default function SettingsDialog({
     aiApiKey: "",
     aiModel: "",
     aiSystemPrompt: "",
+    deepgramApiKey: "",
   });
   const [defaults, setDefaults] = useState<{
     aiBaseUrl: string;
     aiModel: string;
     aiSystemPrompt: string;
     hasEnvKey: boolean;
+    hasDgKey?: boolean;
   } | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [version, setVersion] = useState("");
@@ -82,6 +85,7 @@ export default function SettingsDialog({
           aiApiKey: data.settings.aiApiKey ?? "",
           aiModel: data.settings.aiModel,
           aiSystemPrompt: data.settings.aiSystemPrompt,
+          deepgramApiKey: data.settings.deepgramApiKey ?? "",
         });
       });
   }, [open]);
@@ -268,6 +272,22 @@ export default function SettingsDialog({
                 placeholder={defaults?.aiSystemPrompt}
                 onChange={(e) => set("aiSystemPrompt")(e.target.value)}
               />
+            </div>
+
+            <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
+              <label className="block text-sm font-medium mb-1">
+                {t("deepgramKey")}
+              </label>
+              <input
+                type="password"
+                className={inputCls}
+                value={form.deepgramApiKey}
+                placeholder={defaults?.hasDgKey ? "••••••••" : "Token from console.deepgram.com"}
+                onChange={(e) => set("deepgramApiKey")(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-zinc-500">
+                {t("deepgramHint")}
+              </p>
             </div>
             </div>
             )}

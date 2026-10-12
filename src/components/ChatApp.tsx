@@ -9,6 +9,7 @@ import RoomMessageList, { RoomMsg } from "./RoomMessageList";
 import BotAvatar from "./BotAvatar";
 import BotDialog, { BotData } from "./BotDialog";
 import SettingsDialog from "./SettingsDialog";
+import { VoiceSession, type VoiceStatus } from "@/lib/voice";
 
 type Bot = {
   id: number;
@@ -49,6 +50,9 @@ export default function ChatApp({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dark, setDark] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("off");
+  const [voiceInterim, setVoiceInterim] = useState("");
+  const voiceRef = useRef<VoiceSession | null>(null);
 
   useEffect(() => {
     setDark(document.documentElement.classList.contains("dark"));
@@ -201,6 +205,55 @@ export default function ChatApp({
     );
     return () => clearInterval(iv);
   }, [activeRoom, streaming, roomThinking, loadMessages]);
+
+  // --- Voice conversation (Deepgram STT + browser TTS) ----------------
+  // Free-speech mode: the session streams mic audio continuously,
+  // Deepgram's endpointing detects turn boundaries, finals are posted
+  // as room messages, bot replies are spoken via speechSynthesis.
+  const sendRef = useRef<(text: string) => void>(() => {});
+  sendRef.current = (text) => send(text);
+  const streamingRef = useRef(false);
+  streamingRef.current = streaming;
+
+  function toggleVoice() {
+    if (voiceRef.current) {
+      voiceRef.current.stop();
+      voiceRef.current = null;
+      return;
+    }
+    const session = new VoiceSession({
+      onStatus: setVoiceStatus,
+      onInterim: setVoiceInterim,
+      onFinal: (text) => sendRef.current(text),
+      onError: (msg) => {
+        if (msg === "no_deepgram_key" || msg === "mic_denied")
+          setSettingsOpen(true);
+      },
+    });
+    voiceRef.current = session;
+    session.start();
+  }
+
+  // Stop voice when switching rooms or leaving the page.
+  useEffect(() => {
+    return () => {
+      voiceRef.current?.stop();
+      voiceRef.current = null;
+    };
+  }, [activeRoom?.id]);
+
+  // Speak the bot's reply once streaming settles and the last message
+  // is a finished bot message.
+  const prevStreaming = useRef(false);
+  useEffect(() => {
+    const wasStreaming = prevStreaming.current;
+    prevStreaming.current = streaming;
+    if (!wasStreaming || streaming) return;
+    const last = messages[messages.length - 1];
+    if (voiceRef.current && last?.kind === "bot" && !last.streaming) {
+      voiceRef.current.speak(last.content);
+    }
+  }, [streaming, messages]);
 
   function openNewRoom() {
     setRoomName("");
@@ -778,6 +831,9 @@ export default function ChatApp({
                 onSend={send}
                 disabled={streaming}
                 placeholder={`${t("messageTo")} ${activeRoom.name}`}
+                voiceStatus={voiceStatus}
+                voiceInterim={voiceInterim}
+                onToggleVoice={toggleVoice}
               />
             </div>
           </>

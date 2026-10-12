@@ -9,3 +9,4 @@ data/
 release/
 dist/
 dist-server.tar.gz
+dev-server.log

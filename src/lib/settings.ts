@@ -6,12 +6,13 @@ export type UserSettings = {
   aiApiKey: string | null;
   aiModel: string | null;
   aiSystemPrompt: string | null;
+  deepgramApiKey: string | null;
 };
 
 export function getUserSettings(userId: number): UserSettings {
   const row = db
     .prepare(
-      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt
+      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key
        FROM user_settings WHERE user_id = ?`
     )
     .get(userId) as
@@ -20,6 +21,7 @@ export function getUserSettings(userId: number): UserSettings {
         ai_api_key: string | null;
         ai_model: string | null;
         ai_system_prompt: string | null;
+        deepgram_api_key: string | null;
       }
     | undefined;
   return {
@@ -27,19 +29,28 @@ export function getUserSettings(userId: number): UserSettings {
     aiApiKey: row?.ai_api_key ?? null,
     aiModel: row?.ai_model ?? null,
     aiSystemPrompt: row?.ai_system_prompt ?? null,
+    deepgramApiKey: row?.deepgram_api_key ?? null,
   };
 }
 
 export function saveUserSettings(userId: number, s: UserSettings) {
   db.prepare(
-    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        ai_base_url = excluded.ai_base_url,
        ai_api_key = excluded.ai_api_key,
        ai_model = excluded.ai_model,
-       ai_system_prompt = excluded.ai_system_prompt`
-  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt);
+       ai_system_prompt = excluded.ai_system_prompt,
+       deepgram_api_key = excluded.deepgram_api_key`
+  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt, s.deepgramApiKey);
+}
+
+/** Deepgram key for voice chat: user setting wins, env fallback. */
+export function resolveDeepgramKey(userId: number): string | null {
+  return getUserSettings(userId).deepgramApiKey ||
+    process.env.DEEPGRAM_API_KEY ||
+    null;
 }
 
 export function resolveAIConfig(userId: number): AIConfig {
