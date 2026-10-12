@@ -181,7 +181,7 @@ export default function RoomMessageList({
                                   return (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img
-                                      src={fileSrc(href)}
+                                      src={fileSrc(href ?? "")}
                                       alt={label}
                                       className="max-w-full max-h-72 rounded-lg border border-zinc-200 dark:border-zinc-700 my-1 cursor-zoom-in object-contain bg-white"
                                       onClick={() => setPreviewFileId(fid)}
