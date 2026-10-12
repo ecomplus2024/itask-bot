@@ -412,10 +412,12 @@ async function* runBot(
   // Fast acknowledgment: when the request clearly needs processing time
   // (queries, tools, contacting colleagues), post a natural one-line ack
   // first — like a real colleague saying "em kiểm tra ngay ạ" — then do
-  // the actual work. Skipped for scheduled/proactive runs and bot DMs.
+  // the actual work. Only in one-on-one chats: in group rooms several
+  // bots acking at once is noise, and bots may legitimately stay silent.
+  // Skipped for scheduled/proactive runs and bot DMs.
   // When Jev is configured it makes the needs-work decision (fast typed
   // answer); without Jev, quickAck's own LLM call decides.
-  if (!hiddenInstruction && !isBotDM && lastUserMsg) {
+  if (!hiddenInstruction && !isBotDM && !allowSilent && lastUserMsg) {
     const needsWork = await jevNeedsWork(userId, lastUserMsg);
     const ack =
       needsWork === false
