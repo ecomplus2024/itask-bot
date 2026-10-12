@@ -1,10 +1,8 @@
 import db from "./db";
 import {
   Bot,
-  getBotRecentLogs,
   getBotTopicNotes,
   getRoomBots,
-  logBotActivity,
   resolveBotConfig,
   resolveResponders,
 } from "./bots";
@@ -352,17 +350,6 @@ export async function prepareBotTurn(
       );
     }
   }
-  const logs = getBotRecentLogs(bot.id);
-  if (logs.length) {
-    addPart(
-      config,
-      "log",
-      "Recent activity log",
-      "\n\n## Recent activity (your work log)\n" +
-        logs.map((l) => `- ${l}`).join("\n")
-    );
-  }
-
   const builtin = getBuiltinTools(userId, bot.id, roomId, collabDepth);
   // Preview builds the prompt only — skip connecting to MCP servers.
   const mcp = opts?.preview
@@ -380,7 +367,9 @@ export async function prepareBotTurn(
     "Tools",
     "\n\nYou have tools available: itask__* for managing your memory, skills, " +
       "MCP servers, your own profile (itask__update_profile), your schedule, " +
-      "messaging other rooms, and creating files for the user " +
+      "searching past conversations (itask__search_history — for anything " +
+      "discussed earlier than the recent messages), messaging other rooms, " +
+      "and creating files for the user " +
       "(itask__create_file — csv/xlsx/html/md/txt; use it whenever the user " +
       "wants a report, export or document), plus tools from your connected " +
       "MCP servers."
@@ -626,9 +615,6 @@ async function* runBot(
   // Persist BEFORE streaming deltas so a client disconnect can never
   // lose a completed reply.
   const saved = saveBotMessage(roomId, bot, text);
-
-  // Daily work log — the bot's own "what I did" record (kind='log').
-  logBotActivity(bot.id, roomName, lastUserMsg ?? "", text);
 
   // Emit in slices for a streaming feel
   for (let i = 0; i < text.length; i += 24) {

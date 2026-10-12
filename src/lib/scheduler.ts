@@ -278,12 +278,6 @@ async function consolidateBotMemories(botId: number, userId: number) {
       "SELECT COUNT(*) c FROM bot_memories WHERE bot_id = ? AND kind != 'log'"
     )
     .get(botId) as { c: number };
-  db.prepare(
-    "INSERT INTO bot_memories (bot_id, kind, content) VALUES (?, 'log', ?)"
-  ).run(
-    botId,
-    `[${new Date().toLocaleString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" })}] Memory review: ${rows.length} → ${kept.c} mục`
-  );
   console.log(
     `[scheduler] bot ${bot.name}: memory consolidated ${rows.length} → ${kept.c}`
   );

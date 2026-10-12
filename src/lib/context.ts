@@ -62,7 +62,7 @@ export function getRoomState(roomId: number): RoomState {
 export function loadRoomContextMessages(
   roomId: number,
   botId: number,
-  limit = 200
+  limit = 10
 ): ChatMessage[] {
   const { summary, summary_before_id } = getRoomState(roomId);
   const rows = (

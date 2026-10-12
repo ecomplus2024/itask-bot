@@ -88,41 +88,6 @@ export function getBotTopicNotes(
     .map((x) => (x.r.topic ? `[${x.r.topic}] ` : "") + x.r.content);
 }
 
-// Daily activity log: only the last couple of days are injected — the rest
-// stays in the DB as history the bot can list/forget.
-export function getBotRecentLogs(botId: number, limit = 25): string[] {
-  const rows = db
-    .prepare(
-      `SELECT content FROM bot_memories
-       WHERE bot_id = ? AND kind = 'log'
-         AND created_at >= datetime('now', '-2 days')
-       ORDER BY id DESC LIMIT ?`
-    )
-    .all(botId, limit) as { content: string }[];
-  return rows.map((r) => r.content).reverse();
-}
-
-// Appends one line to the bot's daily work log after each reply — the
-// "what did I do today" record. Old log lines are pruned after 30 days.
-export function logBotActivity(
-  botId: number,
-  roomName: string,
-  trigger: string,
-  reply: string
-) {
-  const ts = new Date().toLocaleString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" });
-  const line =
-    `[${ts}] ${roomName}: "${trigger.replace(/\s+/g, " ").slice(0, 120)}"` +
-    ` → "${reply.replace(/\s+/g, " ").slice(0, 160)}"`;
-  db.prepare(
-    "INSERT INTO bot_memories (bot_id, kind, content) VALUES (?, 'log', ?)"
-  ).run(botId, line);
-  db.prepare(
-    `DELETE FROM bot_memories
-     WHERE bot_id = ? AND kind = 'log' AND created_at < datetime('now', '-30 days')`
-  ).run(botId);
-}
-
 export function getBotSkillsPrompt(botId: number, userId: number): string {
   // All enabled skills are shared across every bot of this user
   const rows = db
@@ -189,12 +154,15 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `- Use **bold** to highlight the few words/numbers/names that really ` +
     `matter in a reply (key figures, deadlines, warnings) — sparingly, ` +
     `never whole sentences.\n` +
-    `- IMPORTANT: whenever the user shares durable facts RELEVANT TO YOUR ` +
-    `OWN role and work (names, dates, deadlines, preferences, decisions ` +
-    `about YOUR domain), you MUST call itask__remember BEFORE replying. ` +
-    `Do NOT store facts that belong to a colleague's job or that have ` +
-    `nothing to do with you — in group chats, only remember what concerns ` +
-    `YOUR work; other bots remember their own.\n` +
+    `- IMPORTANT: your memory stores distilled LESSONS, not conversation ` +
+    `history (chats are already saved — recall older ones with ` +
+    `itask__search_history). Whenever the user corrects how you did ` +
+    `something, teaches you the right method, states a rule/preference, ` +
+    `or shares a durable fact RELEVANT TO YOUR OWN role and work, you ` +
+    `MUST call itask__remember BEFORE replying — save the lesson so you ` +
+    `get it right next time. Do NOT record what merely happened, and do ` +
+    `NOT store facts that belong to a colleague's job — other bots ` +
+    `remember their own.\n` +
     `- IMPORTANT: whenever the user asks you to do something LATER or ` +
     `PERIODICALLY ("X phút nữa", "sáng mai", "mỗi ngày", "báo cáo lại sau"...), ` +
     `you MUST call itask__schedule_task BEFORE replying — never just promise ` +

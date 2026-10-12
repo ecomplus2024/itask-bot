@@ -45,7 +45,7 @@ export function getBuiltinTools(
             function: {
               name: "itask__remember",
               description:
-                "Save information to YOUR long-term memory. ALWAYS use this tool (NOT itask__create_skill) to store facts. SCOPE RULE: only store what is relevant to YOUR OWN role and work — facts about the user directed at you, your domain, your tasks. Do NOT store things that belong to a colleague's job or that don't concern you — their bot remembers its own. Kinds: 'core' = durable facts/preferences/deadlines, always loaded into your context — use this by default and keep it short; 'note' = a longer note about a specific topic (project details, procedures, reference material), loaded only when the conversation touches that topic.",
+                "Save a distilled LESSON to your long-term memory — like training yourself: the CORRECT way to do something after a mistake or user correction, rules and preferences the user stated, durable facts YOUR work needs. NOT for recording what happened in chats — conversation history is already stored; recall older discussions with itask__search_history. SCOPE RULE: only what concerns YOUR OWN role and work — a colleague's job is theirs to remember. Kinds: 'core' = lessons/rules/facts always loaded into your context — default, keep it short; 'note' = a longer reference note about a specific topic (procedures, project details), loaded only when the conversation touches that topic.",
               parameters: {
                 type: "object",
                 properties: {
@@ -75,6 +75,33 @@ export function getBuiltinTools(
               name: "itask__list_memories",
               description: "List everything you have remembered so far",
               parameters: { type: "object", properties: {} },
+            },
+          },
+          {
+            type: "function" as const,
+            function: {
+              name: "itask__search_history",
+              description:
+                "Search your OWN past conversations — every room you are a member of. Use when the user asks about something discussed earlier (yesterday, last week, a specific date) that is not among the recent messages or in your memory.",
+              parameters: {
+                type: "object",
+                properties: {
+                  days: {
+                    type: "number",
+                    description:
+                      "How many days back to look (default 7, max 90)",
+                  },
+                  keyword: {
+                    type: "string",
+                    description: "Optional text to filter messages by",
+                  },
+                  room_id: {
+                    type: "number",
+                    description: "Optional: search only this room",
+                  },
+                },
+                required: [],
+              },
             },
           },
           {
@@ -482,10 +509,11 @@ export function getBuiltinTools(
           (m) => m.content.toLowerCase().replace(/\s+/g, " ") === norm
         );
         if (dup) return JSON.stringify({ ok: true, id: dup.id, deduped: true });
-        // Jev scope gate: prompt rules alone still let stray facts about
-        // colleagues' work leak into the wrong bot's memory — when Jev is
-        // configured, one fast noul vets relevance to THIS bot's role
-        // before persisting. Failures save as normal (never block memory).
+        // Jev vetting: prompt rules alone still let stray/ephemeral stuff
+        // leak into memory — when Jev is configured, one call with two
+        // fast nouls checks the entry is (a) in THIS bot's role scope and
+        // (b) a durable lesson worth keeping, not just a record of what
+        // happened. Failures save as normal — Jev can never block memory.
         if (resolveJevKey(userId)) {
           const b = db
             .prepare("SELECT name, role FROM bots WHERE id = ?")
@@ -493,31 +521,50 @@ export function getBuiltinTools(
           const answers = await jevEval(
             userId,
             `${b?.name ?? "This bot"}${b?.role ? ` (${b.role})` : ""} is ` +
-              `about to store this in its long-term memory:\n` +
+              `about to store this in its long-term learned memory:\n` +
               `"${content.slice(0, 1000)}"`,
             {
               in_scope: {
                 type: "noul",
                 instructions:
-                  `This fact concerns ${b?.name ?? "the bot"}'s own role ` +
-                  `and work${b?.role ? ` (${b.role})` : ""} — it is not a ` +
-                  `colleague's job or unrelated information overheard in a ` +
-                  `group`,
+                  `This concerns ${b?.name ?? "the bot"}'s own role and ` +
+                  `work${b?.role ? ` (${b.role})` : ""} — it is not a ` +
+                  `colleague's job or unrelated information overheard in ` +
+                  `a group`,
+              },
+              worth_keeping: {
+                type: "noul",
+                instructions:
+                  "This is a durable lesson worth keeping long-term — a " +
+                  "corrected method, a stated rule or preference, " +
+                  "knowledge that improves future work — rather than " +
+                  "ephemeral chatter or a record of what happened",
               },
             }
           );
-          const v = answers?.in_scope?.noul;
-          if (v != null && v <= 0.5) {
+          const inScope = answers?.in_scope?.noul;
+          const worth = answers?.worth_keeping?.noul;
+          const reject =
+            inScope != null && inScope <= 0.5
+              ? "out_of_scope"
+              : worth != null && worth <= 0.5
+                ? "not_a_lesson"
+                : null;
+          if (reject) {
             console.log(
-              `[jev] ${b?.name}: rejected out-of-scope memory ` +
-                `(${v.toFixed(2)}): "${content.slice(0, 60)}"`
+              `[jev] ${b?.name}: rejected memory (${reject}): ` +
+                `"${content.slice(0, 60)}"`
             );
             return JSON.stringify({
               ok: false,
-              skipped: "out_of_scope",
+              skipped: reject,
               message:
-                "Not stored: this does not concern YOUR role — leave it " +
-                "for the colleague it belongs to.",
+                reject === "out_of_scope"
+                  ? "Not stored: this does not concern YOUR role — leave " +
+                    "it for the colleague it belongs to."
+                  : "Not stored: this is ephemeral conversation detail, " +
+                    "not a lasting lesson. Chat history already keeps it " +
+                    "— recall it with itask__search_history when needed.",
             });
           }
         }
@@ -538,6 +585,40 @@ export function getBuiltinTools(
             )
             .all(botId)
         );
+      }
+      case "itask__search_history": {
+        if (!botId) return "History search is only available to bots";
+        const days = Math.min(Math.max(Number(args.days) || 7, 1), 90);
+        const kw = args.keyword ? `%${String(args.keyword).trim()}%` : null;
+        const rid = args.room_id != null ? Number(args.room_id) : null;
+        const rows = db
+          .prepare(
+            `SELECT m.created_at, m.sender_name, m.content, m.room_id,
+                    r.name AS room
+             FROM room_messages m
+             JOIN rooms r ON r.id = m.room_id AND r.user_id = ?
+             JOIN room_members rm ON rm.room_id = m.room_id
+               AND rm.kind = 'bot' AND rm.ref_id = ?
+             WHERE m.created_at >= datetime('now', ?)
+               AND (? IS NULL OR m.content LIKE ?)
+               AND (? IS NULL OR m.room_id = ?)
+             ORDER BY m.id DESC LIMIT 30`
+          )
+          .all(userId, botId, `-${days} days`, kw, kw, rid, rid) as {
+          created_at: string;
+          sender_name: string;
+          content: string;
+          room_id: number;
+          room: string | null;
+        }[];
+        if (!rows.length) return JSON.stringify({ found: 0 });
+        return rows
+          .map(
+            (r) =>
+              `[${r.created_at}] ${r.room ?? `room ${r.room_id}`} — ` +
+              `${r.sender_name}: ${r.content.replace(/\s+/g, " ").slice(0, 300)}`
+          )
+          .join("\n");
       }
       case "itask__forget": {
         if (!botId) return "Memory is only available to bots";

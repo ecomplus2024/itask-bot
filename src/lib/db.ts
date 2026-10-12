@@ -247,7 +247,9 @@ for (const [col, ddl] of [
 }
 
 // Migrate: structured memory — 'core' facts (always loaded), 'note' topic
-// notes (loaded when relevant), 'log' daily activity entries (recent only).
+// notes (loaded when relevant). 'log' activity entries are retired:
+// conversation history already lives in room_messages and bots recall it
+// via itask__search_history — memory is for distilled lessons only.
 {
   const cols = db.pragma("table_info(bot_memories)") as { name: string }[];
   if (!cols.some((c) => c.name === "kind")) {
@@ -256,6 +258,7 @@ for (const [col, ddl] of [
     );
     db.exec(`ALTER TABLE bot_memories ADD COLUMN topic TEXT`);
   }
+  db.exec("DELETE FROM bot_memories WHERE kind = 'log'");
 }
 
 // Skills and MCP servers are shared across all bots — normalize legacy
