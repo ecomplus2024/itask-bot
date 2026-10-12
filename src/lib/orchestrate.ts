@@ -769,17 +769,20 @@ async function quickAck(
             (force
               ? `Handling it needs real work or time — reply with ONE ` +
                 `short natural acknowledgment in the same language the ` +
-                `message uses, like a human colleague ("Dạ em kiểm tra ` +
-                `ngay ạ"). Acknowledge only: no answers, no questions, ` +
-                `no details.`
+                `message uses, like a real colleague.`
               : `If handling it needs real work or time (data queries, tools, ` +
                 `contacting people, research, analysis, creating files) → reply ` +
                 `with ONE short natural acknowledgment in the same language the ` +
-                `message uses — like a human colleague ("Dạ em kiểm tra ngay ạ"). ` +
-                `Acknowledge only: no answers, no questions, no details.\n` +
+                `message uses, like a real colleague.\n` +
                 `If you could answer it right away with no work at all ` +
                 `(greeting, thanks, trivial small talk) → reply with exactly ` +
-                `[[NOW]] and nothing else.`),
+                `[[NOW]] and nothing else.\n`) +
+            `\nAcknowledge only: no answers, no questions, no details. ` +
+            `Make it specific to THIS task — briefly name what you're ` +
+            `about to do ("Vâng anh, em tra lại số dư ads ngay ạ" for an ` +
+            `ads-balance request — NOT a generic "em kiểm tra ngay ạ" for ` +
+            `everything). Vary your wording each time — never reuse the ` +
+            `same phrase.`,
         },
       ],
       { ...config, systemPrompt: "You write one-line chat acknowledgments." },
