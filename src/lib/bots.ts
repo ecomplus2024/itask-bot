@@ -89,17 +89,26 @@ export function getBotTopicNotes(
 }
 
 export function getBotSkillsPrompt(botId: number, userId: number): string {
-  // All enabled skills are shared across every bot of this user
+  // Lazy loading: only the skill INDEX goes into the prompt — full
+  // procedure text is loaded on demand via itask__use_skill, so prompts
+  // stay small no matter how many skills accumulate.
   const rows = db
     .prepare(
-      `SELECT name, content FROM skills
+      `SELECT id, name, description FROM skills
        WHERE user_id = ? AND enabled = 1
        ORDER BY id`
     )
-    .all(userId) as { name: string; content: string }[];
+    .all(userId) as { id: number; name: string; description: string | null }[];
   if (!rows.length) return "";
   return (
-    "\n\n## Skills\n" + rows.map((s) => `### ${s.name}\n${s.content}`).join("\n\n")
+    "\n\n## Skills (learned procedures — loaded on demand)\n" +
+    rows
+      .map(
+        (s) => `- #${s.id} ${s.name}${s.description ? ` — ${s.description}` : ""}`
+      )
+      .join("\n") +
+    `\nWhen a task matches a skill above, FIRST call itask__use_skill ` +
+    `with its id to load the exact verified steps, then follow them.`
   );
 }
 
@@ -183,6 +192,14 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `get it right next time. Do NOT record what merely happened, and do ` +
     `NOT store facts that belong to a colleague's job — other bots ` +
     `remember their own.\n` +
+    `- LEARN PROCEDURES: after you deliver a task result (report, export, ` +
+    `analysis…) and the user confirms it is correct or accepts it ` +
+    `without corrections, distill the exact steps you took into ` +
+    `itask__create_skill — which tools, which queries, which format — ` +
+    `so you do it right immediately next time. If the user later ` +
+    `corrects the output, fix the skill's steps with ` +
+    `itask__update_skill. Before doing a task that matches a listed ` +
+    `skill, load it with itask__use_skill first.\n` +
     `- IMPORTANT: whenever the user asks you to do something LATER or ` +
     `PERIODICALLY ("X phút nữa", "sáng mai", "mỗi ngày", "báo cáo lại sau"...), ` +
     `you MUST call itask__schedule_task BEFORE replying — never just promise ` +

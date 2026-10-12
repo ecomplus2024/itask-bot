@@ -70,7 +70,15 @@ function describeToolCall(name: string, args: Record<string, unknown>): string {
     case "itask__search_history":
       return `Đang tra lại lịch sử trò chuyện${q ? ` — “${q}”` : ""}`;
     case "itask__create_skill":
-      return "Đang tạo kỹ năng mới";
+      return "Đang lưu quy trình thành kỹ năng";
+    case "itask__use_skill":
+      return "Đang mở quy trình đã học";
+    case "itask__list_skills":
+      return "Đang xem danh sách kỹ năng";
+    case "itask__update_skill":
+      return "Đang sửa lại quy trình";
+    case "itask__delete_skill":
+      return "Đang xóa kỹ năng";
     case "itask__update_profile":
       return "Đang cập nhật hồ sơ";
     case "itask__schedule_task":

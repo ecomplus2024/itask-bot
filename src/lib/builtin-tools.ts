@@ -360,7 +360,7 @@ export function getBuiltinTools(
       function: {
         name: "itask__create_skill",
         description:
-          "Create a reusable BEHAVIOR/instruction pattern (e.g. 'always reply formally', 'translate EN→VI'). Do NOT use this to store facts or data — use itask__remember for that.",
+          "Save a VERIFIED PROCEDURE as a reusable skill — the exact steps that produced a correct result (which tools, queries, formats, order). Create this AFTER the user confirms a deliverable was right (or accepts it without corrections), so the same task is done right immediately next time. When the user later corrects the output, fix the steps with itask__update_skill. NOT for facts or memories — use itask__remember for those.",
         parameters: {
           type: "object",
           properties: {
@@ -372,6 +372,19 @@ export function getBuiltinTools(
             },
           },
           required: ["name", "content"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "itask__use_skill",
+        description:
+          "Load the full procedure of a skill by id (from the skills index in your system prompt or itask__list_skills). Call this BEFORE doing a task that matches a listed skill — then follow its steps.",
+        parameters: {
+          type: "object",
+          properties: { id: { type: "number" } },
+          required: ["id"],
         },
       },
     },
@@ -1103,6 +1116,17 @@ export function getBuiltinTools(
             String(args.content ?? "").trim()
           );
         return JSON.stringify({ ok: true, id: Number(r.lastInsertRowid) });
+      }
+      case "itask__use_skill": {
+        const s = db
+          .prepare(
+            "SELECT name, description, content FROM skills WHERE id = ? AND user_id = ? AND enabled = 1"
+          )
+          .get(Number(args.id), userId) as
+          | { name: string; description: string | null; content: string }
+          | undefined;
+        if (!s) return JSON.stringify({ ok: false, error: "skill not found" });
+        return `## Skill: ${s.name}${s.description ? ` — ${s.description}` : ""}\n\n${s.content}`;
       }
       case "itask__list_skills": {
         return JSON.stringify(
