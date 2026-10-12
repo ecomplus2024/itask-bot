@@ -135,8 +135,8 @@ export default function RoomMessageList({
                 <div
                   className={
                     isUser
-                      ? "rounded-2xl rounded-br-md bg-zinc-900 dark:bg-zinc-700 text-white px-4 py-2.5 whitespace-pre-wrap text-sm"
-                      : "prose-chat text-sm leading-relaxed rounded-2xl rounded-tl-md bg-white dark:bg-zinc-100 text-zinc-900 border border-zinc-200 dark:border-zinc-300 shadow-sm px-4 py-3 max-w-[92%]"
+                      ? "rounded-2xl rounded-br-md bg-zinc-900 dark:bg-zinc-600 text-white px-4 py-2.5 whitespace-pre-wrap text-sm"
+                      : "prose-chat text-sm leading-relaxed rounded-2xl rounded-tl-md bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700/60 shadow-sm px-4 py-3 max-w-[92%]"
                   }
                 >
                   {isUser ? (
