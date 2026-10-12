@@ -22,6 +22,15 @@ export type VoiceEvents = {
 
 // AudioWorklet processor: hands Float32 mic chunks to the main thread.
 // Inlined via Blob URL so no extra static asset is needed.
+// Short Vietnamese acknowledgements played while the bot thinks —
+// picked at random so consecutive turns don't sound robotic.
+const FILLERS = [
+  "Vâng ạ.",
+  "Em xem ngay ạ.",
+  "Dạ, em kiểm tra ạ.",
+  "Vâng, để em xem ạ.",
+];
+
 const WORKLET_SRC = `
 class P extends AudioWorkletProcessor {
   process(inputs) {
@@ -181,6 +190,9 @@ export class VoiceSession {
       return;
     }
 
+    // Interim results also arrive while the bot is speaking (barge-in
+    // preview) — but only finals trigger the filler + send path below.
+
     if (m.type === "Results") {
       const text = m.channel?.alternatives?.[0]?.transcript?.trim() ?? "";
       if (m.is_final) {
@@ -198,6 +210,15 @@ export class VoiceSession {
     this.finals = [];
     this.ev.onInterim("");
     if (text) this.ev.onFinal(text);
+  }
+
+  /** Instant audible acknowledgement while the LLM orchestrates —
+   * the "filler audio" trick production voice agents use to mask
+   * tool/thinking latency. */
+  filler() {
+    if (this.status === "off" || this.status === "connecting") return;
+    const f = FILLERS[Math.floor(Math.random() * FILLERS.length)];
+    this.enqueue(f);
   }
 
   private audio: HTMLAudioElement | null = null;

@@ -234,10 +234,15 @@ export default function ChatApp({
     const session = new VoiceSession({
       onStatus: setVoiceStatus,
       onInterim: setVoiceInterim,
-      // Queue while a bot reply is streaming so spoken turns aren't dropped.
+      // Queue while a bot reply is streaming so spoken turns aren't
+      // dropped; otherwise play a filler ack instantly, then send.
       onFinal: (text) => {
-        if (streamingRef.current) pendingVoice.current.push(text);
-        else sendRef.current(text);
+        if (streamingRef.current) {
+          pendingVoice.current.push(text);
+        } else {
+          session.filler();
+          sendRef.current(text);
+        }
       },
       onError: (code) => {
         setVoiceError(code);
