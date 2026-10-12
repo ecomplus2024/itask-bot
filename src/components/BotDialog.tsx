@@ -406,7 +406,9 @@ export default function BotDialog({
                     {t("noMemories")}
                   </p>
                 )}
-                {memories.map((m) => (
+                {memories
+                  .filter((m) => m.kind !== "log")
+                  .map((m) => (
                   <div
                     key={m.id}
                     className="flex items-start gap-2 rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2"
@@ -442,6 +444,34 @@ export default function BotDialog({
                   >
                     {t("clearAll")}
                   </button>
+                )}
+                {memories.filter((m) => m.kind === "log").length > 0 && (
+                  <details className="pt-2">
+                    <summary className="cursor-pointer text-xs text-zinc-500">
+                      {t("memLog")} (
+                      {memories.filter((m) => m.kind === "log").length})
+                    </summary>
+                    <div className="space-y-1.5 mt-2">
+                      {memories
+                        .filter((m) => m.kind === "log")
+                        .map((m) => (
+                          <div
+                            key={m.id}
+                            className="flex items-start gap-2 rounded-lg border border-zinc-200/60 dark:border-zinc-800/60 px-3 py-1.5"
+                          >
+                            <p className="flex-1 text-xs text-zinc-500 break-words">
+                              {m.content}
+                            </p>
+                            <button
+                              onClick={() => deleteMemory(m.id)}
+                              className="text-xs text-zinc-400 hover:text-red-500"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                  </details>
                 )}
               </div>
             )}
