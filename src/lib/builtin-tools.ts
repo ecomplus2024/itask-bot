@@ -1,5 +1,6 @@
 import db from "./db";
 import { jevEval, resolveJevKey } from "./jev";
+import { resolvePeriod } from "./period";
 import { listTools, McpServer } from "./mcp";
 import type { OpenAITool } from "./mcp";
 import { assertValidCron, nextCronRunUtc } from "./cron";
@@ -109,6 +110,25 @@ export function getBuiltinTools(
                   },
                 },
                 required: [],
+              },
+            },
+          },
+          {
+            type: "function" as const,
+            function: {
+              name: "itask__resolve_period",
+              description:
+                "Resolve a time expression into an exact date range. REQUIRED before any data query or answer bounded by time ('hôm qua', 'tuần trước', 'tháng 10', '7 ngày qua', 'từ 1/10 đến 10/10'...): pass the user's raw phrase, then use the returned from/to dates verbatim in your query tools. Never compute date ranges yourself.",
+              parameters: {
+                type: "object",
+                properties: {
+                  expression: {
+                    type: "string",
+                    description:
+                      "The user's raw time phrase, e.g. 'hôm qua', 'tháng trước', 'tuần này', 'từ 01/10 đến 10/10'",
+                  },
+                },
+                required: ["expression"],
               },
             },
           },
@@ -645,6 +665,23 @@ export function getBuiltinTools(
               `${r.sender_name}: ${r.content.replace(/\s+/g, " ").slice(0, 300)}`
           )
           .join("\n");
+      }
+      case "itask__resolve_period": {
+        const p = resolvePeriod(String(args.expression ?? ""));
+        if (!p)
+          return JSON.stringify({
+            ok: false,
+            error:
+              "Could not resolve that time phrase — ask the user for an " +
+              "explicit date (dd/mm/yyyy) or a clearer range instead of guessing.",
+          });
+        return JSON.stringify({
+          ok: true,
+          from: p.from,
+          to: p.to,
+          label: p.label,
+          hint: "Use these exact from/to dates (inclusive) in your query — do not adjust or recompute them.",
+        });
       }
       case "itask__forget": {
         if (!botId) return "Memory is only available to bots";

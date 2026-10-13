@@ -70,6 +70,10 @@ function describeToolCall(name: string, args: Record<string, unknown>): string {
       return "Đang cập nhật bộ nhớ";
     case "itask__search_history":
       return `Đang tra lại lịch sử trò chuyện${q ? ` — “${q}”` : ""}`;
+    case "itask__resolve_period": {
+      const expr = String(args.expression ?? "").slice(0, 40);
+      return `Đang xác định khoảng thời gian${expr ? ` — “${expr}”` : ""}`;
+    }
     case "itask__create_skill":
       return "Đang lưu quy trình thành kỹ năng";
     case "itask__use_skill":
@@ -1079,6 +1083,7 @@ async function verifyActions(
     "itask__list_rooms",
     "itask__list_bots",
     "itask__update_profile",
+    "itask__resolve_period",
   ]);
   const workCalls = [...calledTools].filter((t) => !META_TOOLS.has(t)).length;
 

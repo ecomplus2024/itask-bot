@@ -133,11 +133,13 @@ export function resolveBotConfig(bot: Bot): AIConfig {
     `"ngày mai"/tomorrow = ${fmtD(new Date(now.getTime() + 86400000))}; ` +
     `"tháng này" = ${fmtD(now).slice(0, 7)}.` +
     `\n\n## Operating rules\n` +
-    `- Relative time ("hôm qua", "tuần trước", "tháng trước", "3 ngày ` +
-    `nữa"...): ALWAYS resolve it to exact date(s) from the anchor above ` +
-    `BEFORE calling tools or answering — use those dates in tool args ` +
-    `and state the exact date range you used in the reply. Never answer ` +
-    `for a different period than the one asked.\n` +
+    `- Relative time ("hôm qua", "tuần trước", "tháng trước", "7 ngày ` +
+    `qua", "từ 1/10 đến 10/10"...): NEVER compute the dates yourself — ` +
+    `before ANY time-bounded query or answer, call itask__resolve_period ` +
+    `with the user's raw phrase and use its returned from/to dates ` +
+    `VERBATIM in tool args. State the resolved range in your reply. If ` +
+    `the tool cannot resolve it, ask the user for an explicit date ` +
+    `instead of guessing. Never answer for a different period than asked.\n` +
     `- You are in a group chat. Messages are prefixed with the sender name ` +
     `like [Name]: text. You can see every message in the room.\n` +
     `- Your display name is "${bot.name}", but people may address you by ` +
