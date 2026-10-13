@@ -7,9 +7,14 @@ const TZ = "Asia/Ho_Chi_Minh";
 const DAY = 86400000;
 
 export interface Period {
-  from: string; // YYYY-MM-DD
-  to: string; // YYYY-MM-DD
+  from: string; // YYYY-MM-DD (VN calendar)
+  to: string; // YYYY-MM-DD (VN calendar)
   label: string; // human-readable, e.g. "hôm qua — 12/10/2026"
+  // Same window as UTC instants — APIs that take fromDate/toDate
+  // timestamps need these; shifting a bare date by hand reintroduces
+  // exactly the off-by-one-day errors this resolver exists to kill.
+  fromUtc: string; // start of `from` in VN, e.g. 2026-10-11T17:00:00.000Z
+  toUtc: string; // end of `to` in VN (inclusive)
 }
 
 function norm(s: string): string {
@@ -59,15 +64,22 @@ export function resolvePeriod(input: string): Period | null {
       "T00:00:00Z"
   );
   const at = (n: number) => new Date(today.getTime() + n * DAY);
+  // VN is UTC+07:00 year-round — fixed offset, no DST.
+  const utc = (from: string, to: string) => ({
+    fromUtc: new Date(`${from}T00:00:00+07:00`).toISOString(),
+    toUtc: new Date(`${to}T23:59:59+07:00`).toISOString(),
+  });
   const one = (d: Date): Period => ({
     from: iso(d),
     to: iso(d),
     label: vi(d),
+    ...utc(iso(d), iso(d)),
   });
   const span = (a: Date, b: Date, label: string): Period => ({
     from: iso(a),
     to: iso(b),
     label: `${label} — ${vi(a)} → ${vi(b)}`,
+    ...utc(iso(a), iso(b)),
   });
 
   // ── Explicit ranges & dates ────────────────────────────────────
@@ -82,6 +94,7 @@ export function resolvePeriod(input: string): Period | null {
         from: iso(a),
         to: iso(b),
         label: `${vi(a)} → ${vi(b)}`,
+        ...utc(iso(a), iso(b)),
       };
   }
   const explicit = parseDate(e, today);

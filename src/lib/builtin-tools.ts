@@ -679,8 +679,13 @@ export function getBuiltinTools(
           ok: true,
           from: p.from,
           to: p.to,
+          fromUtc: p.fromUtc,
+          toUtc: p.toUtc,
           label: p.label,
-          hint: "Use these exact from/to dates (inclusive) in your query — do not adjust or recompute them.",
+          hint:
+            "from/to = VN calendar dates (inclusive). If the API takes " +
+            "timestamps (fromDate/toDate), use fromUtc/toUtc — they " +
+            "already encode the VN day window in UTC; do NOT shift them again.",
         });
       }
       case "itask__forget": {
