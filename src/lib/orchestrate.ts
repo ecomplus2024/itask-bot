@@ -701,10 +701,12 @@ async function* runBot(
           role: "user",
           content:
             `Current date/time: ${new Date().toLocaleString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" })} (Asia/Ho_Chi_Minh).\n` +
-            "You acknowledged work in words but never called the required " +
-            "tool(s). Call each of these now for real — use run_at as an " +
-            "ISO datetime computed from the current time above — then " +
-            "confirm briefly (confirmation only, no data/result dump):\n- " +
+            "You skipped required tool call(s). Call each of these now " +
+            "for real — where an item needs run_at, compute it from the " +
+            "time above. THEN send your final reply: unless an item " +
+            "explicitly says otherwise, it must still carry the full " +
+            "substantive answer (data, results) — never reduce it to a " +
+            "bare confirmation:\n- " +
             missing.join("\n- "),
         });
         const retry = yield* drain(runRounds(4));
