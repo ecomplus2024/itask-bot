@@ -1,10 +1,12 @@
 "use client";
 
 // Live voice conversation: mic → PCM16 → authenticated server relay →
-// Deepgram Nova-3 STT (vi). Final utterances are handed to the caller
-// (which posts them as room messages); bot replies are spoken back via
-// the browser's Vietnamese speechSynthesis. Barge-in: Deepgram's
-// SpeechStarted event cancels TTS the moment the user talks over it.
+// Deepgram Nova-3 STT (language pinned in user settings). Final
+// utterances go to the ephemeral /api/voice/chat endpoint; bot replies
+// are spoken back via server-side Edge TTS (voice pinned in settings),
+// with browser speechSynthesis only as a last-resort fallback.
+// Barge-in: Deepgram's SpeechStarted event cancels TTS the moment the
+// user talks over it.
 
 export type VoiceStatus =
   | "off"
@@ -22,14 +24,25 @@ export type VoiceEvents = {
 
 // AudioWorklet processor: hands Float32 mic chunks to the main thread.
 // Inlined via Blob URL so no extra static asset is needed.
-// Short Vietnamese acknowledgements played while the bot thinks —
-// picked at random so consecutive turns don't sound robotic.
-const FILLERS = [
-  "Vâng ạ.",
-  "Em xem ngay ạ.",
-  "Dạ, em kiểm tra ạ.",
-  "Vâng, để em xem ạ.",
-];
+// Short acknowledgements played while the bot thinks — picked at
+// random so consecutive turns don't sound robotic. Keyed by the
+// user's voice-language setting.
+const FILLERS: Record<string, string[]> = {
+  vi: [
+    "Vâng ạ.",
+    "Em xem ngay ạ.",
+    "Dạ, em kiểm tra ạ.",
+    "Vâng, để em xem ạ.",
+  ],
+  en: [
+    "Sure.",
+    "One moment.",
+    "Let me check.",
+    "On it.",
+  ],
+};
+
+import { dgToBcp } from "./voice-langs";
 
 import { startMicCapture, type MicCapture } from "./mic";
 
@@ -40,6 +53,8 @@ export class VoiceSession {
   private ev: VoiceEvents;
   private status: VoiceStatus = "off";
   private voicesReady = false;
+  private dgLang = "vi";
+  private bcp = "vi-VN";
 
   constructor(events: VoiceEvents) {
     this.ev = events;
@@ -68,6 +83,19 @@ export class VoiceSession {
       this.fail("insecure_context");
       return;
     }
+
+    // Pinned voice language — fillers and the browser-TTS fallback
+    // must match what the server-side TTS will speak in.
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => {
+        const lang = d?.settings?.voiceLanguage as string | undefined;
+        if (lang) {
+          this.dgLang = lang;
+          this.bcp = dgToBcp(lang);
+        }
+      })
+      .catch(() => {});
 
     // 1) Mic → PCM16 16kHz chunks → relay WebSocket
     try {
@@ -182,8 +210,8 @@ export class VoiceSession {
    * tool/thinking latency. */
   filler() {
     if (this.status === "off" || this.status === "connecting") return;
-    const f = FILLERS[Math.floor(Math.random() * FILLERS.length)];
-    this.enqueue(f);
+    const list = FILLERS[this.dgLang.split("-")[0]] ?? FILLERS.en;
+    this.enqueue(list[Math.floor(Math.random() * list.length)]);
   }
 
   private audio: HTMLAudioElement | null = null;
@@ -308,11 +336,12 @@ export class VoiceSession {
     if (typeof speechSynthesis === "undefined") return;
     const u = new SpeechSynthesisUtterance(clean.slice(0, 1200));
     const voices = speechSynthesis.getVoices();
-    const vi =
-      voices.find((v) => v.lang === "vi-VN") ??
-      voices.find((v) => v.lang.startsWith("vi"));
-    if (vi) u.voice = vi;
-    u.lang = vi?.lang ?? "vi-VN";
+    const prefix = this.bcp.split("-")[0];
+    const match =
+      voices.find((v) => v.lang.replace("_", "-") === this.bcp) ??
+      voices.find((v) => v.lang.replace("_", "-").startsWith(prefix));
+    if (match) u.voice = match;
+    u.lang = match?.lang ?? this.bcp;
     u.rate = 1.05;
     u.onstart = () => {
       if (this.status !== "off") this.setStatus("speaking");

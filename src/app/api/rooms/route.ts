@@ -20,11 +20,29 @@ export async function GET() {
     `SELECT kind, sender_name, content, created_at FROM room_messages
      WHERE room_id = ? ORDER BY id DESC LIMIT 1`
   );
-  const result = (rooms as { id: number }[]).map((r) => ({
-    ...r,
-    bots: memberStmt.all(r.id),
-    last_message: lastMsgStmt.get(r.id) ?? null,
-  }));
+  const readStmt = db.prepare(
+    "SELECT last_read_id FROM room_reads WHERE user_id = ? AND room_id = ?"
+  );
+  const unreadStmt = db.prepare(
+    `SELECT COUNT(*) AS c FROM room_messages
+     WHERE room_id = ? AND id > ?
+       AND NOT (kind = 'user' AND sender_id = ?)`
+  );
+  const result = (rooms as { id: number }[]).map((r) => {
+    const lastReadId =
+      (readStmt.get(user.id, r.id) as { last_read_id: number } | undefined)
+        ?.last_read_id ?? 0;
+    const unread = (
+      unreadStmt.get(r.id, lastReadId, user.id) as { c: number }
+    ).c;
+    return {
+      ...r,
+      bots: memberStmt.all(r.id),
+      last_message: lastMsgStmt.get(r.id) ?? null,
+      last_read_id: lastReadId,
+      unread,
+    };
+  });
   return NextResponse.json({ rooms: result });
 }
 

@@ -1,7 +1,8 @@
 import { WebSocketServer, WebSocket } from "ws";
 import db from "./db";
 import { roomBus } from "./bus";
-import { resolveDeepgramKey } from "./settings";
+import { resolveDeepgramKey, getUserSettings } from "./settings";
+import { DEFAULT_DG_LANG } from "./voice-langs";
 
 const WS_PORT = Number(process.env.ITASK_WS_PORT || 3001);
 
@@ -9,14 +10,17 @@ const WS_PORT = Number(process.env.ITASK_WS_PORT || 3001);
 // client mic → this socket → Deepgram; transcripts flow back the same
 // path. Vietnamese via language=vi; endpointing detects the end of a
 // free-speech turn so no push-to-talk is needed.
-const DG_URL =
+const DG_BASE =
   "wss://api.deepgram.com/v1/listen" +
-  "?model=nova-3&language=vi&encoding=linear16&sample_rate=16000" +
+  "?model=nova-3&encoding=linear16&sample_rate=16000" +
   "&channels=1&interim_results=true&endpointing=500&vad_events=true" +
   "&smart_format=true&punctuate=true";
 
 function startDeepgram(userId: number, sock: WebSocket): WebSocket | null {
   const key = resolveDeepgramKey(userId);
+  const lang =
+    getUserSettings(userId).voiceLanguage || DEFAULT_DG_LANG;
+  const url = `${DG_BASE}&language=${encodeURIComponent(lang)}`;
   if (!key) {
     sock.send(
       JSON.stringify({
@@ -26,7 +30,7 @@ function startDeepgram(userId: number, sock: WebSocket): WebSocket | null {
     );
     return null;
   }
-  const dg = new WebSocket(DG_URL, {
+  const dg = new WebSocket(url, {
     headers: { Authorization: `Token ${key}` },
   });
   dg.on("message", (data) => {

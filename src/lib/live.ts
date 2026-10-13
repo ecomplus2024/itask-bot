@@ -43,8 +43,11 @@ export class LiveSession {
   private inputText = "";
   private stopped = false;
   private reconnects = 0;
-  private ctx: { systemInstruction?: string; tools?: unknown[] } | null =
-    null;
+  private ctx: {
+    systemInstruction?: string;
+    tools?: unknown[];
+    speech?: { languageCode?: string; voiceName?: string };
+  } | null = null;
 
   constructor(roomId: number, events: LiveEvents) {
     this.roomId = roomId;
@@ -71,6 +74,7 @@ export class LiveSession {
       reason?: string;
       systemInstruction?: string;
       tools?: unknown[];
+      speech?: { languageCode?: string; voiceName?: string };
     } | null;
     if (!tokRes.ok || !ctx?.available)
       return this.fail(ctx?.reason ?? "live_unavailable");
@@ -122,9 +126,13 @@ export class LiveSession {
             generationConfig: {
               responseModalities: ["AUDIO"],
               speechConfig: {
-                languageCode: "vi-VN",
+                ...(this.ctx?.speech?.languageCode
+                  ? { languageCode: this.ctx.speech.languageCode }
+                  : {}),
                 voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: "Aoede" },
+                  prebuiltVoiceConfig: {
+                    voiceName: this.ctx?.speech?.voiceName ?? "Aoede",
+                  },
                 },
               },
             },

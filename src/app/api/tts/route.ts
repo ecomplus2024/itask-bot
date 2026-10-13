@@ -1,13 +1,15 @@
 import { NextRequest } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { getUserSettings } from "@/lib/settings";
+import { DEFAULT_EDGE_VOICE } from "@/lib/voice-langs";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 
 export const runtime = "nodejs";
 
-// Edge Read Aloud neural voices — free Vietnamese TTS (the OS and
-// Electron's Chromium have no vi-VN voice, and Deepgram Aura doesn't
-// support Vietnamese). HoaiMy is a natural female vi-VN voice.
-const VOICE = "vi-VN-HoaiMyNeural";
+// Edge Read Aloud neural voices — free TTS (the OS and Electron's
+// Chromium have no vi-VN voice, and Deepgram Aura doesn't support
+// Vietnamese). The voice is pinned per-user in Settings so every
+// spoken line — fillers, replies, retries — sounds identical.
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser();
@@ -19,10 +21,15 @@ export async function POST(req: NextRequest) {
   const clean = (text ?? "").trim().slice(0, 3000);
   if (!clean) return new Response("empty", { status: 400 });
 
+  const voice =
+    /^[\w.-]{1,60}$/.test(getUserSettings(user.id).voiceName ?? "")
+      ? getUserSettings(user.id).voiceName!
+      : DEFAULT_EDGE_VOICE;
+
   try {
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
-      VOICE,
+      voice,
       OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
     );
     const { audioStream } = tts.toStream(clean);

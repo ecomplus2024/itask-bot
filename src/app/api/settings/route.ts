@@ -24,6 +24,9 @@ export async function GET() {
       deepgramApiKey: mask(s.deepgramApiKey),
       geminiApiKey: mask(s.geminiApiKey),
       jevApiKey: mask(s.jevApiKey),
+      voiceLanguage: s.voiceLanguage ?? "",
+      voiceName: s.voiceName ?? "",
+      liveVoiceName: s.liveVoiceName ?? "",
     },
     defaults: {
       aiBaseUrl: env.baseUrl,
@@ -70,6 +73,9 @@ export async function PUT(req: NextRequest) {
     deepgramApiKey: dgKey?.trim() || null,
     geminiApiKey: gmKey?.trim() || null,
     jevApiKey: jevKey?.trim() || null,
+    voiceLanguage: body.voiceLanguage?.trim().slice(0, 20) || null,
+    voiceName: body.voiceName?.trim().slice(0, 80) || null,
+    liveVoiceName: body.liveVoiceName?.trim().slice(0, 40) || null,
   });
   return NextResponse.json({ ok: true });
 }

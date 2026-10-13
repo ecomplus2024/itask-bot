@@ -3,6 +3,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { resolveGeminiKey } from "@/lib/settings";
 import { getRoomBots, resolveBotConfig } from "@/lib/bots";
 import { getBuiltinTools } from "@/lib/builtin-tools";
+import { getUserSettings } from "@/lib/settings";
+import { dgToBcp, DEFAULT_LIVE_VOICE, LIVE_VOICES } from "@/lib/voice-langs";
 import db from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -47,10 +49,22 @@ export async function GET(req: NextRequest) {
     `afterwards. When you need data, call tools — tell the user briefly ` +
     `("để em xem ngay") while it runs.`;
 
+  // Pinned voice/language so calls sound identical every time —
+  // "multi" has no single BCP-47 locale, so Live auto-detects instead.
+  const vs = getUserSettings(user.id);
+  const dgLang = vs.voiceLanguage ?? "vi";
+  const languageCode =
+    dgLang === "multi" ? "" : dgToBcp(dgLang);
+  const liveVoice =
+    LIVE_VOICES.some((v) => v.name === vs.liveVoiceName)
+      ? vs.liveVoiceName!
+      : DEFAULT_LIVE_VOICE;
+
   return NextResponse.json({
     available: true,
     bot: { id: bot.id, name: bot.name, avatar: bot.avatar },
     systemInstruction,
+    speech: { languageCode, voiceName: liveVoice },
     tools: [
       {
         functionDeclarations: tools.map((t) => ({

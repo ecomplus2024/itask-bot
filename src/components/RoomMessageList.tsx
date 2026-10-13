@@ -84,21 +84,32 @@ function parseSuggestions(content: string): {
 
 export default function RoomMessageList({
   messages,
+  unreadAfterId,
   streaming,
   thinkingBot,
   onSuggestion,
 }: {
   messages: RoomMsg[];
+  /** Messages with id > this were unseen when the room opened. */
+  unreadAfterId?: number;
   streaming: boolean;
   thinkingBot?: { id: number; name: string; avatar?: string };
   onSuggestion?: (text: string) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [previewFileId, setPreviewFileId] = useState<number | null>(null);
+  const { t } = useT();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "instant" });
   }, [messages]);
+
+  // The "new messages" divider anchors at the first unseen persisted
+  // message — streaming bubbles have no id yet and sit after it.
+  const dividerIdx =
+    unreadAfterId != null && unreadAfterId >= 0
+      ? messages.findIndex((m) => m.id != null && m.id > unreadAfterId)
+      : -1;
 
   return (
     <div className="flex-1 overflow-y-auto px-4">
@@ -116,8 +127,17 @@ export default function RoomMessageList({
             ? { text: m.content, suggestions: [] }
             : parseSuggestions(m.content);
           return (
+            <div key={m.id ?? `s${i}`}>
+              {i === dividerIdx && (
+                <div className="my-3 flex items-center gap-3">
+                  <span className="h-px flex-1 bg-emerald-500/50" />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                    {t("newMessages")}
+                  </span>
+                  <span className="h-px flex-1 bg-emerald-500/50" />
+                </div>
+              )}
             <div
-              key={m.id ?? `s${i}`}
               className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""} ${
                 isFirst ? (i === 0 ? "" : "mt-5") : "mt-1"
               }`}
@@ -271,6 +291,7 @@ export default function RoomMessageList({
                   </p>
                 )}
               </div>
+            </div>
             </div>
           );
         })}

@@ -33,7 +33,17 @@ type Room = {
     content: string;
     created_at: string;
   } | null;
+  last_read_id?: number;
+  unread?: number;
 };
+
+function UnreadBadge({ n }: { n: number }) {
+  return (
+    <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-500 flex items-center justify-center text-[11px] font-bold leading-none text-white">
+      {n > 99 ? "99+" : n}
+    </span>
+  );
+}
 
 export default function ChatApp({
   user,
@@ -47,6 +57,9 @@ export default function ChatApp({
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [messages, setMessages] = useState<RoomMsg[]>([]);
   const [streaming, setStreaming] = useState(false);
+  // Message id boundary between "seen" and "new" — captured when the
+  // room is opened so the divider stays anchored even as more arrive.
+  const [unreadAfterId, setUnreadAfterId] = useState(-1);
 
   const [botDialog, setBotDialog] = useState<BotData | null | "new">(null);
   const [roomDialog, setRoomDialog] = useState<"new" | Room | null>(null);
@@ -129,14 +142,25 @@ export default function ChatApp({
           ? prev
           : mapped;
       });
+      // The room is on screen — everything just loaded counts as read.
+      // (Hidden tabs keep the badge until the user actually looks.)
+      if (document.visibilityState === "visible") markRead(room.id);
     },
     []
   );
+
+  function markRead(roomId: number) {
+    setRooms((rs) =>
+      rs.map((r) => (r.id === roomId ? { ...r, unread: 0 } : r))
+    );
+    void fetch(`/api/rooms/${roomId}/read`, { method: "POST" });
+  }
 
   async function openRoom(room: Room) {
     abortRef.current?.abort();
     setActiveRoom(room);
     setMessages([]);
+    setUnreadAfterId((room.unread ?? 0) > 0 ? (room.last_read_id ?? 0) : -1);
     await loadMessages(room);
   }
 
@@ -161,6 +185,8 @@ export default function ChatApp({
   activeRoomRef.current = activeRoom;
   const loadMessagesRef = useRef(loadMessages);
   loadMessagesRef.current = loadMessages;
+  const loadRoomsRef = useRef(loadRooms);
+  loadRoomsRef.current = loadRooms;
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -180,8 +206,13 @@ export default function ChatApp({
         try {
           const ev = JSON.parse(e.data);
           const room = activeRoomRef.current;
-          if (ev.type === "refresh" && room && ev.roomId === room.id) {
+          if (ev.type !== "refresh") return;
+          if (room && ev.roomId === room.id) {
             loadMessagesRef.current(room);
+          } else {
+            // A message landed in a room that isn't open — refresh the
+            // list so its unread badge appears immediately.
+            loadRoomsRef.current();
           }
         } catch {
           // ignore malformed frames
@@ -793,6 +824,7 @@ export default function ChatApp({
               const isBot = !!it.bot;
               const r = it.room;
               const name = it.bot?.name ?? r?.name ?? "";
+              const unread = r?.unread ?? 0;
               const preview = r
                 ? lastMessagePreview(r, !!r.direct_bot_id)
                 : "";
@@ -847,7 +879,11 @@ export default function ChatApp({
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="min-w-0 truncate text-base font-semibold">
+                      <p
+                        className={`min-w-0 truncate text-base font-semibold ${
+                          unread ? "text-zinc-900 dark:text-white" : ""
+                        }`}
+                      >
                         {name}
                       </p>
                       {isBot && it.bot?.role && (
@@ -861,9 +897,18 @@ export default function ChatApp({
                         )}
                       </span>
                     </div>
-                    <p className="mt-0.5 truncate text-[13px] text-zinc-500">
-                      {preview || fallback || "\u00A0"}
-                    </p>
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <p
+                        className={`min-w-0 flex-1 truncate text-[13px] ${
+                          unread
+                            ? "font-medium text-zinc-800 dark:text-zinc-200"
+                            : "text-zinc-500"
+                        }`}
+                      >
+                        {preview || fallback || "\u00A0"}
+                      </p>
+                      {unread > 0 && <UnreadBadge n={unread} />}
+                    </div>
                   </div>
                 </div>
               );
@@ -890,10 +935,9 @@ export default function ChatApp({
               <p className="px-1 py-2 text-xs text-zinc-500">{t("noBots")}</p>
             )}
             {bots.map((b) => {
-              const preview = lastMessagePreview(
-                rooms.find((r) => r.direct_bot_id === b.id),
-                true
-              );
+              const direct = rooms.find((r) => r.direct_bot_id === b.id);
+              const unread = direct?.unread ?? 0;
+              const preview = lastMessagePreview(direct, true);
               return (
               <div
                 key={b.id}
@@ -907,7 +951,11 @@ export default function ChatApp({
               >
                 <BotAvatar avatar={b.avatar} botId={b.id} size={28} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                  <p
+                    className={`text-sm truncate flex items-center gap-1.5 ${
+                      unread ? "font-bold" : "font-medium"
+                    }`}
+                  >
                     {b.name}
                     {b.thinking && (
                       <span className="typing-dots text-emerald-500 scale-75 origin-left shrink-0">
@@ -918,11 +966,18 @@ export default function ChatApp({
                     )}
                   </p>
                   {(preview || b.role) && (
-                    <p className="text-xs text-zinc-500 truncate">
+                    <p
+                      className={`text-xs truncate ${
+                        unread
+                          ? "font-medium text-zinc-700 dark:text-zinc-300"
+                          : "text-zinc-500"
+                      }`}
+                    >
                       {preview || b.role}
                     </p>
                   )}
                 </div>
+                {unread > 0 && <UnreadBadge n={unread} />}
                 <button
                   title={t("editBot")}
                   onClick={(e) => {
@@ -974,7 +1029,11 @@ export default function ChatApp({
                 }`}
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm truncate flex items-center gap-1.5">
+                  <p
+                    className={`text-sm truncate flex items-center gap-1.5 ${
+                      r.unread ? "font-bold" : ""
+                    }`}
+                  >
                     {r.name}
                     {roomBusy && (
                       <span className="typing-dots text-emerald-500 scale-75 origin-left shrink-0">
@@ -984,10 +1043,17 @@ export default function ChatApp({
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-zinc-500 truncate">
+                  <p
+                    className={`text-xs truncate ${
+                      r.unread
+                        ? "font-medium text-zinc-700 dark:text-zinc-300"
+                        : "text-zinc-500"
+                    }`}
+                  >
                     {preview || r.bots.map((b) => b.name).join(", ")}
                   </p>
                 </div>
+                {r.unread ? <UnreadBadge n={r.unread} /> : null}
                 <button
                   title={t("editRoom")}
                   onClick={(e) => {
@@ -1036,7 +1102,11 @@ export default function ChatApp({
                         }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm truncate flex items-center gap-1.5">
+                          <p
+                            className={`text-sm truncate flex items-center gap-1.5 ${
+                              r.unread ? "font-bold" : ""
+                            }`}
+                          >
                             {r.name}
                             {roomBusy && (
                               <span className="typing-dots text-emerald-500 scale-75 origin-left shrink-0">
@@ -1047,11 +1117,18 @@ export default function ChatApp({
                             )}
                           </p>
                           {preview && (
-                            <p className="text-xs text-zinc-500 truncate">
+                            <p
+                              className={`text-xs truncate ${
+                                r.unread
+                                  ? "font-medium text-zinc-700 dark:text-zinc-300"
+                                  : "text-zinc-500"
+                              }`}
+                            >
                               {preview}
                             </p>
                           )}
                         </div>
+                        {r.unread ? <UnreadBadge n={r.unread} /> : null}
                         <button
                           title={t("delete")}
                           onClick={(e) => {
@@ -1240,6 +1317,7 @@ export default function ChatApp({
             ) : (
               <RoomMessageList
                 messages={messages}
+                unreadAfterId={unreadAfterId}
                 streaming={streaming || roomThinking}
                 thinkingBot={
                   roomThinking && !streaming

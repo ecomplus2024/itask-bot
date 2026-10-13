@@ -9,12 +9,15 @@ export type UserSettings = {
   deepgramApiKey: string | null;
   geminiApiKey: string | null;
   jevApiKey: string | null;
+  voiceLanguage: string | null;
+  voiceName: string | null;
+  liveVoiceName: string | null;
 };
 
 export function getUserSettings(userId: number): UserSettings {
   const row = db
     .prepare(
-      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key, jev_api_key
+      `SELECT ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key, jev_api_key, voice_language, voice_name, live_voice_name
        FROM user_settings WHERE user_id = ?`
     )
     .get(userId) as
@@ -26,6 +29,9 @@ export function getUserSettings(userId: number): UserSettings {
         deepgram_api_key: string | null;
         gemini_api_key: string | null;
         jev_api_key: string | null;
+        voice_language: string | null;
+        voice_name: string | null;
+        live_voice_name: string | null;
       }
     | undefined;
   return {
@@ -36,13 +42,16 @@ export function getUserSettings(userId: number): UserSettings {
     deepgramApiKey: row?.deepgram_api_key ?? null,
     geminiApiKey: row?.gemini_api_key ?? null,
     jevApiKey: row?.jev_api_key ?? null,
+    voiceLanguage: row?.voice_language ?? null,
+    voiceName: row?.voice_name ?? null,
+    liveVoiceName: row?.live_voice_name ?? null,
   };
 }
 
 export function saveUserSettings(userId: number, s: UserSettings) {
   db.prepare(
-    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key, jev_api_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO user_settings (user_id, ai_base_url, ai_api_key, ai_model, ai_system_prompt, deepgram_api_key, gemini_api_key, jev_api_key, voice_language, voice_name, live_voice_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        ai_base_url = excluded.ai_base_url,
        ai_api_key = excluded.ai_api_key,
@@ -50,8 +59,11 @@ export function saveUserSettings(userId: number, s: UserSettings) {
        ai_system_prompt = excluded.ai_system_prompt,
        deepgram_api_key = excluded.deepgram_api_key,
        gemini_api_key = excluded.gemini_api_key,
-       jev_api_key = excluded.jev_api_key`
-  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt, s.deepgramApiKey, s.geminiApiKey, s.jevApiKey);
+       jev_api_key = excluded.jev_api_key,
+       voice_language = excluded.voice_language,
+       voice_name = excluded.voice_name,
+       live_voice_name = excluded.live_voice_name`
+  ).run(userId, s.aiBaseUrl, s.aiApiKey, s.aiModel, s.aiSystemPrompt, s.deepgramApiKey, s.geminiApiKey, s.jevApiKey, s.voiceLanguage, s.voiceName, s.liveVoiceName);
 }
 
 /** Deepgram key for voice chat: user setting wins, env fallback. */

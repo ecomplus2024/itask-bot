@@ -118,6 +118,15 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- Per-user read cursor: highest message id the user has seen in each
+  -- room. Unread = messages after it (minus the user's own messages).
+  CREATE TABLE IF NOT EXISTS room_reads (
+    user_id INTEGER NOT NULL,
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    last_read_id INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, room_id)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
   CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
@@ -234,6 +243,15 @@ for (const [col, ddl] of [
   }
   if (!cols.some((c) => c.name === "jev_api_key")) {
     db.exec(`ALTER TABLE user_settings ADD COLUMN jev_api_key TEXT`);
+  }
+  if (!cols.some((c) => c.name === "voice_language")) {
+    db.exec(`ALTER TABLE user_settings ADD COLUMN voice_language TEXT`);
+  }
+  if (!cols.some((c) => c.name === "voice_name")) {
+    db.exec(`ALTER TABLE user_settings ADD COLUMN voice_name TEXT`);
+  }
+  if (!cols.some((c) => c.name === "live_voice_name")) {
+    db.exec(`ALTER TABLE user_settings ADD COLUMN live_voice_name TEXT`);
   }
 }
 

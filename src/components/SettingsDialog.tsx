@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useT } from "@/lib/i18n";
+import { VOICE_LANGS, LIVE_VOICES, dgToBcp } from "@/lib/voice-langs";
 import SkillsPanel from "./SkillsPanel";
 import McpPanel from "./McpPanel";
 
@@ -13,9 +14,12 @@ type FormState = {
   deepgramApiKey: string;
   geminiApiKey: string;
   jevApiKey: string;
+  voiceLanguage: string;
+  voiceName: string;
+  liveVoiceName: string;
 };
 
-const SECTIONS = ["aiConfig", "skills", "mcp", "update"] as const;
+const SECTIONS = ["aiConfig", "voice", "skills", "mcp", "update"] as const;
 type Section = (typeof SECTIONS)[number];
 
 type UpdateState =
@@ -44,7 +48,13 @@ export default function SettingsDialog({
     deepgramApiKey: "",
     geminiApiKey: "",
     jevApiKey: "",
+    voiceLanguage: "vi",
+    voiceName: "",
+    liveVoiceName: "",
   });
+  const [voices, setVoices] = useState<
+    { name: string; label: string; locale: string }[]
+  >([]);
   const [defaults, setDefaults] = useState<{
     aiBaseUrl: string;
     aiModel: string;
@@ -94,9 +104,23 @@ export default function SettingsDialog({
           deepgramApiKey: data.settings.deepgramApiKey ?? "",
           geminiApiKey: data.settings.geminiApiKey ?? "",
           jevApiKey: data.settings.jevApiKey ?? "",
+          voiceLanguage: data.settings.voiceLanguage || "vi",
+          voiceName: data.settings.voiceName ?? "",
+          liveVoiceName: data.settings.liveVoiceName ?? "",
         });
       });
   }, [open]);
+
+  // Edge TTS voices for the chosen language — reloaded when it changes.
+  useEffect(() => {
+    if (!open) return;
+    // "multi" has no single locale — list every available voice.
+    const bcp = form.voiceLanguage === "multi" ? "" : dgToBcp(form.voiceLanguage);
+    fetch(`/api/voices?lang=${encodeURIComponent(bcp)}`)
+      .then((r) => r.json())
+      .then((d) => setVoices(d.voices ?? []))
+      .catch(() => setVoices([]));
+  }, [open, form.voiceLanguage]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -124,6 +148,10 @@ export default function SettingsDialog({
 
   const inputCls =
     "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-500";
+  // Native <select> popups ignore inherited dark text — pin background +
+  // color-scheme so options stay readable in dark mode.
+  const selectCls =
+    "w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-500 dark:[color-scheme:dark]";
 
   return (
     <div
@@ -222,6 +250,74 @@ export default function SettingsDialog({
             )}
             {section === "skills" && <SkillsPanel />}
             {section === "mcp" && <McpPanel />}
+            {section === "voice" && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    {t("voiceLanguage")}
+                  </label>
+                  <select
+                    className={selectCls}
+                    value={form.voiceLanguage}
+                    onChange={(e) => {
+                      set("voiceLanguage")(e.target.value);
+                      set("voiceName")("");
+                    }}
+                  >
+                    {VOICE_LANGS.map((l) => (
+                      <option key={l.dg} value={l.dg}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {t("voiceLanguageHint")}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    {t("ttsVoice")}
+                  </label>
+                  <select
+                    className={selectCls}
+                    value={form.voiceName}
+                    onChange={(e) => set("voiceName")(e.target.value)}
+                  >
+                    <option value="">{t("defaultVoice")}</option>
+                    {voices.map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {t("ttsVoiceHint")}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    {t("liveVoice")}
+                  </label>
+                  <select
+                    className={selectCls}
+                    value={form.liveVoiceName}
+                    onChange={(e) => set("liveVoiceName")(e.target.value)}
+                  >
+                    <option value="">{t("defaultVoice")} (Aoede)</option>
+                    {LIVE_VOICES.map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.name} — {v.trait}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {t("liveVoiceHint")}
+                  </p>
+                </div>
+              </div>
+            )}
             {section === "aiConfig" && (
             <div className="space-y-4">
             <div>
@@ -333,7 +429,7 @@ export default function SettingsDialog({
             )}
           </div>
 
-          {section === "aiConfig" && (
+          {(section === "aiConfig" || section === "voice") && (
           <div className="flex justify-end gap-2 px-5 py-3 border-t border-zinc-200 dark:border-zinc-800">
             {status === "saved" && (
               <span className="self-center text-sm text-green-600">
