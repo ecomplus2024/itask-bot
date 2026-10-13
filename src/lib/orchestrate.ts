@@ -227,7 +227,11 @@ export async function prepareBotTurn(
   userId: number,
   hiddenInstruction?: string,
   collabDepth = 0,
-  opts?: { preview?: boolean; ephemeralHistory?: ChatMessage[] }
+  opts?: {
+    preview?: boolean;
+    ephemeralHistory?: ChatMessage[];
+    voice?: boolean;
+  }
 ): Promise<PreparedTurn> {
   const config = resolveBotConfig(bot);
 
@@ -325,6 +329,34 @@ export async function prepareBotTurn(
         `you for help — give the FULL answer or work result they need ` +
         `(data, files, analysis), not a 4-line summary. Be complete but ` +
         `focused; skip small talk.`
+    );
+  }
+
+  // Voice call: the reply is HEARD, not read — spoken-conversation
+  // conventions override the texting rules above (4-line limit stays,
+  // but markdown/lists/links and "never ask back" do not apply here).
+  if (opts?.voice) {
+    addPart(
+      config,
+      "voice",
+      "Voice call",
+      `\n\nYou are on a LIVE VOICE CALL with the user — they hear your ` +
+        `reply spoken aloud, they cannot read it. Talk like a real ` +
+        `person on the phone:\n` +
+        `- Short natural spoken sentences — 1-3 per turn, conversational ` +
+        `and warm, not a written report. Use the same language the user ` +
+        `speaks.\n` +
+        `- Absolutely NO markdown, bold, bullets, tables, URLs, file ` +
+        `paths or [[...]] markers — nothing that can't be said out ` +
+        `loud. No "dạ em xin báo cáo" document-speak.\n` +
+        `- Unlike text chat, asking a short question back is natural ` +
+        `here — clarify when needed and keep the conversation flowing, ` +
+        `like colleagues on a call.\n` +
+        `- Numbers, dates and lists that are hard to follow by ear: say ` +
+        `the gist and offer to send details to the chat ("em gửi vào ` +
+        `phòng chat cho anh xem") instead of reciting everything.\n` +
+        `- You may still use tools silently — just never read out raw ` +
+        `tool output or technical details.`
     );
   }
 
@@ -492,7 +524,11 @@ async function* runBot(
   allowSilent = true,
   hiddenInstruction?: string,
   collabDepth = 0,
-  opts?: { ephemeral?: boolean; ephemeralHistory?: ChatMessage[] }
+  opts?: {
+    ephemeral?: boolean;
+    ephemeralHistory?: ChatMessage[];
+    voice?: boolean;
+  }
 ): AsyncGenerator<RoomEvent, string> {
   const {
     config,
@@ -714,7 +750,13 @@ async function* runBot(
     const links = builtin.createdFiles
       .map((f) => `[${f.name}](${f.url})`)
       .join("\n\n");
-    text = SILENT_RE.test(text) ? links : `${text}\n\n${links}`;
+    if (opts?.ephemeral) {
+      // A voice call can't carry a file — drop the artifact into the
+      // room so the user can grab it after hanging up.
+      yield { type: "message", message: saveBotMessage(roomId, bot, links) };
+    } else {
+      text = SILENT_RE.test(text) ? links : `${text}\n\n${links}`;
+    }
   }
 
   // One-on-one chats must never go silent — nudge the model once.
@@ -816,6 +858,7 @@ export function runVoiceTurn(
   const gen = runBot(bot, roomId, userId, false, undefined, 0, {
     ephemeral: true,
     ephemeralHistory,
+    voice: true,
   });
   return (async function* () {
     try {
@@ -1017,19 +1060,43 @@ async function verifyActions(
   ];
   const scheduleCalled = schedTools.some((t) => calledTools.has(t));
   const rememberCalled = calledTools.has("itask__remember");
+  const skillCalled =
+    calledTools.has("itask__create_skill") ||
+    calledTools.has("itask__update_skill");
   const delegateCalled =
     calledTools.has("itask__ask_bot") ||
     calledTools.has("itask__send_room_message");
 
+  // "Work" tool calls = actual task work (MCP queries, file creation…),
+  // not the meta/learning tools themselves. A turn with 2+ work calls
+  // just executed a procedure that may be worth saving as a skill.
+  const META_TOOLS = new Set([
+    "itask__remember",
+    "itask__create_skill",
+    "itask__update_skill",
+    "itask__list_skills",
+    "itask__use_skill",
+    "itask__list_rooms",
+    "itask__list_bots",
+    "itask__update_profile",
+  ]);
+  const workCalls = [...calledTools].filter((t) => !META_TOOLS.has(t)).length;
+
   // Nothing to verify when all concerns are already satisfied.
-  if (scheduleCalled && rememberCalled && delegateCalled) return [];
+  if (
+    scheduleCalled &&
+    rememberCalled &&
+    delegateCalled &&
+    (skillCalled || workCalls < 2)
+  )
+    return [];
 
   const state =
     `USER REQUEST: ${triggerText || "(scheduled run / unknown)"}\n\n` +
     `ASSISTANT REPLY: ${reply}\n\n` +
     `TOOLS ACTUALLY CALLED: ${[...calledTools].join(", ") || "none"}`;
 
-  type Flag = "schedule" | "remember" | "delegate";
+  type Flag = "schedule" | "remember" | "delegate" | "learn" | "skill";
   let flags: Set<Flag> | null = null;
 
   // Jev fast path: three typed noul questions in ONE call replace the
@@ -1062,6 +1129,25 @@ async function verifyActions(
           "another bot, delegated work, or promises to report a " +
           "colleague's answer, but no colleague-contact tool was called " +
           "(a written @mention in the reply does not count)",
+      };
+    if (!rememberCalled)
+      questions.learn = {
+        type: "noul",
+        instructions:
+          "The user gave feedback, a correction, or an instruction about " +
+          "HOW the assistant should do or present future work (format, " +
+          "style, which steps to take, what to avoid) — a durable lesson " +
+          "worth persisting — and no memory tool captured it",
+      };
+    if (!skillCalled && workCalls >= 2)
+      questions.skill = {
+        type: "noul",
+        instructions:
+          "The assistant just completed a working multi-step procedure " +
+          "— discovering the right tools/endpoints/parameters through " +
+          "several calls — that is repeatable enough that saving it as " +
+          "a skill would let it skip the discovery next time, but no " +
+          "skill tool was called",
       };
     const answers = await jevEval(userId, state, questions);
     if (answers) {
@@ -1101,11 +1187,20 @@ async function verifyActions(
               `itask__send_room_message) MUST have been called. An @mention ` +
               `inside the reply text does NOT count — only the tools reach ` +
               `the colleague.\n` +
+              `- If the user gave feedback, a correction, or an instruction ` +
+              `about HOW the assistant should do or present future work ` +
+              `(format, style, which steps to take, what to avoid) and no ` +
+              `memory tool captured it, add "learn".\n` +
+              `- If the assistant completed a working multi-step procedure ` +
+              `(2+ real tool calls discovering endpoints/params/steps) that ` +
+              `is repeatable, and no itask__create_skill/itask__update_skill ` +
+              `was called, add "skill".\n` +
               `- If the user only shared information and the assistant merely ` +
               `acknowledged receipt (no claim to store or to contact anyone), ` +
               `no tool is required.\n` +
               `Reply with a JSON object only, e.g. ` +
-              `{"missing": []} or {"missing": ["schedule", "remember", "delegate"]}.`,
+              `{"missing": []} or {"missing": ["schedule", "remember", ` +
+              `"delegate", "learn", "skill"]}.`,
           },
         ],
         { ...config, systemPrompt: "You are a strict JSON verifier." },
@@ -1116,7 +1211,13 @@ async function verifyActions(
         text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1) || "{}"
       ) as { missing?: string[] };
       for (const m of json.missing ?? [])
-        if (m === "schedule" || m === "remember" || m === "delegate")
+        if (
+          m === "schedule" ||
+          m === "remember" ||
+          m === "delegate" ||
+          m === "learn" ||
+          m === "skill"
+        )
           flags.add(m);
     } catch {
       return [];
@@ -1137,6 +1238,16 @@ async function verifyActions(
   if (flags.has("delegate") && !delegateCalled) {
     missing.push(
       "a colleague-contact tool — you said you would ask/notify another bot but never reached them. Use itask__ask_bot for a private question whose answer you need, or itask__send_room_message to delegate into a shared room (writing @Name in your reply does NOT contact them)."
+    );
+  }
+  if (flags.has("learn") && !rememberCalled) {
+    missing.push(
+      "itask__remember — the user gave feedback about HOW you should work or present results in the future (format, style, corrections). Store the durable lesson/rule now — save the corrected practice, not the conversation."
+    );
+  }
+  if (flags.has("skill") && !skillCalled) {
+    missing.push(
+      "itask__create_skill (or itask__update_skill if a matching skill already exists) — you just completed a multi-step procedure that worked. Save the exact recipe now: which tools/endpoints/params to call, in what order, and how to format the output — so next time you do it in one pass instead of rediscovering it."
     );
   }
   return missing;

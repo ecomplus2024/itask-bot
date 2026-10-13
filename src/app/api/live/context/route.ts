@@ -41,7 +41,10 @@ export async function GET(req: NextRequest) {
     `another language unless the user explicitly asks. Keep it short and ` +
     `conversational — a sentence or two at a time, like a real colleague on ` +
     `a call. Never use markdown, bullet points, tables or emojis — this is ` +
-    `spoken aloud. When you need data, call tools — tell the user briefly ` +
+    `spoken aloud. Unlike text chat, asking a short question back is natural ` +
+    `— clarify when needed and keep the call flowing. For long/detailed ` +
+    `answers, say the gist and offer to send the full result to the chat ` +
+    `afterwards. When you need data, call tools — tell the user briefly ` +
     `("để em xem ngay") while it runs.`;
 
   return NextResponse.json({
